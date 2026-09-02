@@ -1,0 +1,5 @@
+# The dsh-tool-call-limit bundle patch: adds per-agent, per-step
+# ToolRuntime call quotas. Configure concrete limits in the profile patch.
+- insert:
+    - id: tool-call-limit
+      name: '@zhourenke/dsh-tool-call-limit'
