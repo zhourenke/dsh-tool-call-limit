@@ -32,6 +32,17 @@ limits: {}
 
 本仓库中的 `cordis.patch.yml` 只负责把插件插入 bundle，不提供工具限制。实际限制应在 profile patch 中配置，以便由当前 profile 决定启用哪些规则。
 
+## 兼容性
+
+已在 **DSH v0.1.5-rc.1**（2026 年 9 月）版本下测试通过。插件依赖以下运行时包：
+
+- `@deepseek-ai/schemastery`（配置校验）
+- `@deepseek-ai/dsh-agent`（Agent 接口）
+- `@deepseek-ai/dsh-tools`（工具管线）
+- `@deepseek-ai/cordis`（插件框架）
+
+安装依赖后即可在相应版本的 DSH 中使用。
+
 ## 安装与启用
 
 使用 DSH profile 管理命令安装：
@@ -122,7 +133,7 @@ Code Mode 中重新进入 DSH `ToolRuntime` 的内部工具调用，会按所属
 
 ## 开发与验证
 
-本项目针对当前 DSH `0.1.1-rc.2` API 开发。安装依赖后可以运行：
+本项目已在 DSH `0.1.5-rc.1` 下测试通过。安装依赖后可以运行：
 
 ```powershell
 pnpm install
@@ -142,3 +153,9 @@ dsh --profile web --dump-config
 ## License
 
 MIT
+
+## Credits
+
+为 [DeepSeek Harness](https://github.com/deepseek-ai/dsh) 构建。
+
+已通过 DSH v0.1.5-rc.1 测试。

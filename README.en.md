@@ -32,6 +32,17 @@ This configuration allows at most one DSH `web_search` call for the same Agent i
 
 The `cordis.patch.yml` in this repository only inserts the plugin into a bundle. It does not define tool limits. Put the effective rules in the target profile patch so the profile controls which limits are enabled.
 
+## Compatibility
+
+Tested with **DSH v0.1.5-rc.1** (September 2026). The plugin requires the following runtime packages:
+
+- `@deepseek-ai/schemastery` (configuration schema)
+- `@deepseek-ai/dsh-agent` (Agent interface)
+- `@deepseek-ai/dsh-tools` (tool pipeline)
+- `@deepseek-ai/cordis` (plugin framework)
+
+Install dependencies before use with the corresponding DSH version.
+
 ## Installation and activation
 
 Install the package through the DSH profile manager:
@@ -122,7 +133,7 @@ Live Agent objects are keys in a `WeakMap`. State is cleared when a step is reje
 
 ## Development and verification
 
-This project targets the current DSH `0.1.1-rc.2` API. After installing dependencies, run:
+This project is tested with DSH `0.1.5-rc.1`. After installing dependencies, run:
 
 ```powershell
 pnpm install
@@ -142,3 +153,9 @@ Confirm that the bundle contains `tool-call-limit` and that the final `limits` h
 ## License
 
 MIT
+
+## Credits
+
+Built for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
+
+Tested with DSH v0.1.5-rc.1.
