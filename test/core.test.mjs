@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { apply, Config } from '../lib/index.js'
+import { apply, Config, inject, name } from '../lib/index.js'
 
 function createHarness(rawConfig = {}) {
   const listeners = new Map()
@@ -48,6 +48,44 @@ function createHarness(rawConfig = {}) {
     },
   }
 }
+
+// The compiled artifact is what a git install ships, so assert its exported
+// contract directly: `tsc` type-checks the sources and `git status` only proves
+// the file is committed — neither of them ever evaluates `lib/index.js`. A
+// module that throws at import time (a symbol the host removed, a top-level
+// destructure of `undefined`, a missing package) would otherwise stay green
+// until the user restarts DSH and it fails in the startup log.
+test('the compiled module exports the loader contract', () => {
+  assert.equal(name, 'tool-call-limit')
+  assert.deepEqual(inject, ['tools', 'agents'])
+  assert.equal(typeof apply, 'function')
+  assert.equal(typeof Config, 'function')
+})
+
+test('apply registers the step tracker and the quota gate at the right extension points', () => {
+  const registrations = []
+  const ctx = {
+    on(eventName, listener, options) {
+      registrations.push({ eventName, listener, options })
+      return () => true
+    },
+  }
+
+  apply(ctx, Config({ limits: { web_search: 1 } }))
+
+  assert.deepEqual(
+    registrations.map((entry) => entry.eventName).sort(),
+    ['agent/disposed', 'agent/error', 'agent/pre-step', 'agent/turn-stopping', 'tools/pre-execute'],
+  )
+
+  // Both gates must run before every other listener on their event: the quota
+  // has to be reserved before a downstream policy can await, and the step state
+  // has to exist before any other `agent/pre-step` listener runs.
+  for (const eventName of ['agent/pre-step', 'tools/pre-execute']) {
+    const entry = registrations.find((candidate) => candidate.eventName === eventName)
+    assert.deepEqual(entry.options, { prepend: true }, `${eventName} must be registered prepended`)
+  }
+})
 
 test('the default configuration has no limits', () => {
   assert.deepEqual(Config(), { limits: {} })
