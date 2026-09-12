@@ -20,7 +20,7 @@ DSH 的 Agent 在一个 step 里可能并行发出多个工具调用，也可能
 dsh plugin --profile web add "github:zhourenke/dsh-tool-call-limit"
 ```
 
-**必须重启 DSH 才会生效**——插件由 loader 在进程启动时加载，刷新页面无效。
+**安装后必须重启 DSH**——bundle 集合是进程启动时的快照，重启前新插件不会被加载，刷新页面无效。
 
 卸载：
 
@@ -30,22 +30,24 @@ dsh plugin --profile web remove @zhourenke/dsh-tool-call-limit
 
 ## 快速上手
 
-本插件默认**不限制任何工具**（`limits: {}`）。要启用限制，编辑 `~/.dsh/profiles/web/cordis.patch.yml`：
+本插件默认**不限制任何工具**（`limits: {}`）。要启用限制，在 profile 补丁里**覆盖**插件那一行：
 
 ```yaml
-- insert:
-    - id: tool-call-limit
-      name: '@zhourenke/dsh-tool-call-limit'
-      config:
-        limits:
-          web_search: 1
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: tool-call-limit
+  name: '@zhourenke/dsh-tool-call-limit'
+  config:
+    limits:
+      web_search: 1
 ```
 
 上面的配置表示：同一个 Agent 在同一个 step 里最多调用一次 `web_search`；下一个 step 重新获得配额，其他 Agent 有各自的配额。
 
 **没有写进 `limits` 的工具完全不受限**——`web_fetch` 之所以不限，只是因为它没被列出来；需要时单独配它即可。
 
-改完同样需要重启 DSH。确认配置已被加载：
+**改配置保存即生效，不需要重启 DSH。** profile 补丁是热重载的；只有**安装或卸载**插件才需要重启。这两件事经常被混为一谈，结论正好相反。
+
+确认配置已被加载：
 
 ```powershell
 dsh --profile web --dump-config
@@ -53,7 +55,10 @@ dsh --profile web --dump-config
 
 在输出里能看到 `tool-call-limit` 与预期的 `limits` 即已生效。
 
-> 仓库自带的 `cordis.patch.yml` 只负责把插件插入 bundle，**不含任何限制规则**。实际规则一律写在 profile patch 里，由 profile 决定启用哪些。
+> ⚠️ **配置必须用 `- id:` 覆盖的写法，不要写成 `- insert:`。** 插件自带的 bundle patch 已经用 `insert` 把这一行插进去了；在 profile 里再 `insert` 一次**不报错**，而是多出一个同 id 的实例——插件跑两遍、配额算两遍。两者的区别只在动作：`- id:` 按 id 查表覆盖已有条目，`- insert:` 无条件追加。
+>
+> - **`name` 可以省略**（覆盖只看 `id`）；但一旦写了就必须与上面**完全一致**，写错一个字母会静默不生效，只在日志里留一行 warning。
+> - **`config:` 是整体替换，不是逐字段合并。** 本插件的 `config` 只有 `limits` 一个字段，写全即可。
 
 ## 配置
 

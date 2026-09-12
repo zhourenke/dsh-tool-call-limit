@@ -20,7 +20,7 @@ A DSH Agent may issue several tool calls in parallel within one step, and may re
 dsh plugin --profile web add "github:zhourenke/dsh-tool-call-limit"
 ```
 
-**A DSH restart is required for it to take effect** — the plugin is loaded by the loader at process start, so refreshing the page does nothing.
+**A DSH restart is required after installing** — the bundle set is a snapshot taken at process start, so the new plugin is not loaded until the restart. Refreshing the page does nothing.
 
 Uninstall:
 
@@ -30,22 +30,24 @@ dsh plugin --profile web remove @zhourenke/dsh-tool-call-limit
 
 ## Quick start
 
-By default the plugin limits **nothing** (`limits: {}`). To enable limits, edit `~/.dsh/profiles/web/cordis.patch.yml`:
+By default the plugin limits **nothing** (`limits: {}`). To enable limits, **override** the plugin's row in the profile patch:
 
 ```yaml
-- insert:
-    - id: tool-call-limit
-      name: '@zhourenke/dsh-tool-call-limit'
-      config:
-        limits:
-          web_search: 1
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: tool-call-limit
+  name: '@zhourenke/dsh-tool-call-limit'
+  config:
+    limits:
+      web_search: 1
 ```
 
 This allows the same Agent at most one `web_search` call per step; the next step gets a fresh quota, and other Agents have their own.
 
 **Any tool not listed in `limits` is completely unlimited** — `web_fetch` is unlimited only because it is omitted; configure it separately if you want it capped.
 
-A restart is needed here too. To confirm the configuration was loaded:
+**A configuration change takes effect as soon as you save — no DSH restart.** The profile patch is hot-reloaded; only **installing or uninstalling** the plugin needs a restart. The two are often conflated, and the answers are opposite.
+
+To confirm the configuration was loaded:
 
 ```powershell
 dsh --profile web --dump-config
@@ -53,7 +55,10 @@ dsh --profile web --dump-config
 
 If the output contains `tool-call-limit` with the expected `limits`, it is in effect.
 
-> The `cordis.patch.yml` shipped in this repository only inserts the plugin into a bundle. It defines **no** limit rules. Real rules always live in the profile patch, so the profile decides which are enabled.
+> ⚠️ **The configuration must use the `- id:` override form, not `- insert:`.** The bundle patch shipped with the plugin already inserted this row with `insert`; inserting again in the profile raises **no error** but adds a second row with the same id — the plugin runs twice and quotas are counted twice. The only difference is the action: `- id:` looks the entry up by id and overrides it, `- insert:` appends unconditionally.
+>
+> - **`name` may be omitted** (the override matches on `id` alone); but if you do write it, it must match **exactly** — one wrong letter silently does nothing and leaves a single warning line in the log.
+> - **`config:` replaces the whole config object, it is not merged key by key.** This plugin's `config` has only the `limits` field, so writing it in full is all there is to it.
 
 ## Configuration
 
