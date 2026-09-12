@@ -2,70 +2,73 @@
 
 # @zhourenke/dsh-tool-call-limit
 
-`@zhourenke/dsh-tool-call-limit` 是一个 DeepSeek Harness Cordis 插件，用于限制进入 DSH `ToolRuntime` 的工具调用次数。限制范围是：
+**给 DSH 的每个 step 加上工具调用配额：同一个 step 内超过配额的调用被直接拒绝。**
 
-> 每个 live Agent、每个 turn、每个 step、每个工具名，分别使用独立的调用配额。
+DSH 的 Agent 在一个 step 里可能并行发出多个工具调用，也可能在同一个工具上反复重试。本插件在工具真正执行之前按**注册名**检查配额：还有名额就放行，超了就拒绝——**只限流，不改工具本身的行为**。装好即用，无需改动 DSH 源码。
 
-插件不需要静态导入工具。只要调用经过 DSH `ToolRuntime`，就可以按它的注册名配置限制。
+## 它解决什么问题
 
-## 快速配置
+- **同一个 step 里反复调用同一个工具**：给 `web_search: 1` 之后，一个 step 内第二次调用会被拒绝，而不是让 Agent 继续消耗
+- **想彻底禁用某个工具**：配 `0`，该 step 内所有调用都被拒绝
+- **并行调用不会超额**：配额在调用前**同步预占**，两个并行的 `web_search` 只有一个能通过
+- **父子 Agent 各自独立**：子 Agent 有自己的配额，不会吃掉父 Agent 的额度
+- **随时可卸**：作为 profile 层插入，不修改 DSH 本体
 
-插件默认不限制任何工具：
-
-```yaml
-limits: {}
-```
-
-在 profile 的 patch 中启用限制，例如：
-
-```yaml
-# $DSH_HOME/profiles/web/cordis.patch.yml
-- id: tool-call-limit
-  name: '@zhourenke/dsh-tool-call-limit'
-  config:
-    limits:
-      web_search: 1
-      # web_fetch 未列出，因此不受本插件限制
-```
-
-上面的配置表示：同一个 Agent 在同一个 step 中最多调用一次 DSH `web_search`。下一个 step 会重新获得一次配额；其他 Agent 也有自己的配额。`web_fetch` 没有被特殊处理，只是因为没有写入 `limits` 才保持不限；如果需要，也可以单独配置它。
-
-本仓库中的 `cordis.patch.yml` 只负责把插件插入 bundle，不提供工具限制。实际限制应在 profile patch 中配置，以便由当前 profile 决定启用哪些规则。
-
-## 兼容性
-
-已在 **DSH v0.1.5-rc.1**（2026 年 9 月）版本下测试通过。插件依赖以下运行时包：
-
-- `@deepseek-ai/schemastery`（配置校验）
-- `@deepseek-ai/dsh-agent`（Agent 接口）
-- `@deepseek-ai/dsh-tools`（工具管线）
-- `@deepseek-ai/cordis`（插件框架）
-
-安装依赖后即可在相应版本的 DSH 中使用。
-
-## 安装与启用
-
-使用 DSH profile 管理命令安装：
+## 安装
 
 ```powershell
 dsh plugin --profile web add "github:zhourenke/dsh-tool-call-limit"
 ```
 
-安装后，在目标 profile 的 `cordis.patch.yml` 中加入插件配置。卸载时执行：
+**必须重启 DSH 才会生效**——插件由 loader 在进程启动时加载，刷新页面无效。
+
+卸载：
 
 ```powershell
 dsh plugin --profile web remove @zhourenke/dsh-tool-call-limit
 ```
 
-安装插件或修改 profile 配置后，需要重启现有的 DSH Web 服务，新的 bundle 和配置才会生效；随后刷新原有的 `http://127.0.0.1:3080` 即可。插件本身不会启动替代服务器，也不依赖客户端 HMR。
+## 快速上手
 
-## 配置格式
+本插件默认**不限制任何工具**（`limits: {}`）。要启用限制，编辑 `~/.dsh/profiles/web/cordis.patch.yml`：
 
-配置只有一个字段：
+```yaml
+- insert:
+    - id: tool-call-limit
+      name: '@zhourenke/dsh-tool-call-limit'
+      config:
+        limits:
+          web_search: 1
+```
 
-| 字段 | 默认值 | 含义 |
-|---|---:|---|
-| `limits` | `{}` | 工具注册名到该工具每 step 最大调用次数的映射。未列出的工具不限。 |
+上面的配置表示：同一个 Agent 在同一个 step 里最多调用一次 `web_search`；下一个 step 重新获得配额，其他 Agent 有各自的配额。
+
+**没有写进 `limits` 的工具完全不受限**——`web_fetch` 之所以不限，只是因为它没被列出来；需要时单独配它即可。
+
+改完同样需要重启 DSH。确认配置已被加载：
+
+```powershell
+dsh --profile web --dump-config
+```
+
+在输出里能看到 `tool-call-limit` 与预期的 `limits` 即已生效。
+
+> 仓库自带的 `cordis.patch.yml` 只负责把插件插入 bundle，**不含任何限制规则**。实际规则一律写在 profile patch 里，由 profile 决定启用哪些。
+
+## 配置
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|:---:|---|
+| `limits` | object | `{}` | 工具注册名 → 该工具**每个 step** 允许的最大调用次数。未列出的工具不受限。 |
+
+取值规则：
+
+- `0` 表示在该 step 内拒绝该工具的**所有**调用；
+- 正整数表示每个 step 允许的最大调用次数；
+- 负数、小数、字符串、`NaN`、`Infinity`、超出 JavaScript 安全整数范围的数字、数组都会被拒绝；
+- `limits: null`、省略 `limits`、省略整个 `config` 都按 `{}` 处理（即不限）；
+- **不支持 `*` 通配符**，必须逐个工具名配置；
+- 不认识的配置字段会被拒绝，不会静默忽略。
 
 例如：
 
@@ -76,26 +79,26 @@ limits:
   write: 0
 ```
 
-工具名必须与 DSH 注册名完全一致，值必须是非负安全整数：
+## 计数范围：Agent × turn × step × 工具名
 
-- `0` 表示在 active step 中拒绝该工具的所有调用；
-- 正整数表示每个 step 允许的最大调用次数；
-- 负数、浮点数、字符串、`NaN`、无穷大、超出 JavaScript 安全整数范围的数字和数组都会被拒绝；
-- `limits: null`、省略 `limits` 或省略整个配置会按 `{}` 处理；
-- 不支持 `*` 通配符，也不支持单独的“豁免”语法；
-- 不认识的配置字段会被拒绝。
+配额按四个维度分别计算，任一维度不同就是一份**独立**的配额：
 
-## 调用计数语义
+| 维度 | 说明 |
+|---|---|
+| Agent | 父 Agent 与 `subagent` 创建的子 Agent 是不同的 live Agent 对象，各自独立计数，**不会合并成一个总预算** |
+| turn | 一个 turn 内的多个 step 各自计数 |
+| step | **配额的重置单位**——进入新 step 时计数清零，重新获得全部名额 |
+| 工具名 | 每个工具名单独计数，`web_search` 的调用**不占用** `web_fetch` 或 `grep` 的配额 |
 
-插件在 `agent/pre-step` 中记录 Agent 当前的 turn 和 step，并为新 step 建立新的计数表。随后，`tools/pre-execute` 会在工具 body 执行之前按工具名检查配额。
+## 配额怎么消耗
 
-调用通过本插件时，配额会在调用 `next()` 之前同步预占。这一点保证了同一个 step 中的并行调用不会同时看到同一个剩余名额。例如 `web_search: 1` 时，两个并行的 `web_search` 调用只有一个可以继续进入后续管线。
+- **调用前同步预占**：名额在调用 `next()` **之前**就扣掉，所以同一个 step 里的并行调用不会同时看到同一个剩余名额。`web_search: 1` 时，两个并行的 `web_search` 只有一个能继续进入后续管线。
+- **通过即消耗，不退还**：调用通过限制器后立刻消耗一个名额。之后即使工具失败、被取消、超时，或被后续的其他策略拒绝，也**不会退还**。
+- **超限的调用不再消耗**：已经被拒绝的调用不会继续扣名额。
 
-已通过限制器的调用立即消耗一个名额。之后即使工具失败、被取消、超时，或被后续的其他策略拒绝，也不会退还该名额；已经超限的调用不会再次消耗名额。不同工具名分别计数，因此一次 `web_search` 不会占用 `web_fetch` 或 `grep` 的配额。
+## 被拒绝时会看到什么
 
-当工具配置了限制但调用缺少 Agent，或该 Agent 没有经过有效的 `agent/pre-step` 时，插件采用 fail-closed 策略并拒绝调用。未配置限制的工具不会受此上下文要求影响，仍会直接进入后续管线。
-
-拒绝原因使用稳定的英文文本：
+拒绝使用三条**稳定的英文**原因文本：
 
 ```text
 tool <name> exceeded its per-step limit of <n>
@@ -103,59 +106,39 @@ per-step tool limit requires an agent context
 per-step tool limit has no active agent step
 ```
 
-## Agent、子 Agent 与 Code Mode
+第一条是配额用尽；后两条是缺少 Agent 上下文或该 Agent 没有有效的 step，此时采取 fail-closed（拒绝而非放行）。**读到第一条时不要重试同一个工具**——配额要到下一个 step 才会恢复。
 
-父 Agent 与 `subagent` 创建的子 Agent 使用不同的 live Agent 对象，因此默认拥有相互独立的计数状态；插件不会自动把父子 Agent 合并为一个总预算。
+## 给 Agent 的要点
 
-Code Mode 中重新进入 DSH `ToolRuntime` 的内部工具调用，会按所属 Agent 的当前 step 计数。外层 `run_code` 是否受限，则取决于是否另外配置了 `run_code`：配置了就计数，没有配置就不限。
+- 本插件**没有提供任何工具、也没有模型可见的接口**，对模型完全透明：它约束的是**你本来就要调用的那些 DSH 工具**
+- 被拒绝时表现为**工具调用失败**（返回上面三条原因之一），而不是静默变慢
+- 同一个 step 内不要对同一个工具重复重试，配额不会在中途恢复
+- 配置里用的必须是 DSH 的**注册名**，如 `web_search`、`web_fetch`、`grep`、`write`、`bash`、`run_code`
 
-## 限制边界
+## 它管不到什么（限制边界）
 
-本插件限制的是**进入 DSH `ToolRuntime` 的调用次数**，不是工具实现内部发生的操作次数。它不会直接限制：
+本插件限制的是**进入 DSH `ToolRuntime` 的调用次数**，不是工具实现内部发生的操作次数。它不会限制：
 
 - 一次 `web_search` 调用内部发出的多个 query；
 - Web provider 内部的 HTTP 请求或原生 server-tool uses；
 - 一次 `bash` 调用内部执行的多条 shell 命令；
 - MCP 或其他自定义工具内部自行发起的多个 API 请求。
 
-如果需要限制单次 `web_search` 的 query 数量，还要配置 Web 工具的 `searchMaxQueries`；如果 provider 提供 `maxUses`，也需要单独配置。它们与本插件的 ToolRuntime 调用配额属于不同层级。
+要限制单次 `web_search` 的 query 数量，需要另外配置 Web 工具的 `searchMaxQueries`；provider 提供 `maxUses` 时也要单独配置。它们与本插件的 ToolRuntime 调用配额属于**不同层级**。
 
-此外，`maxParallelToolCalls` 是并发数量上限，不是每 step 的总调用次数上限；本插件负责后者。插件状态保存在当前 DSH 进程内存中，不写入 session transcript，也不在进程重启或多个 DSH 实例之间共享。
+`maxParallelToolCalls` 管的是**并发数量**，不是每 step 的总调用次数——本插件负责后者，两者互补。
 
-## 工作原理
+## 已知限制（实测确认）
 
-插件使用两个公开扩展点：
+- **按进程独立计数**：状态保存在当前 DSH 进程内存中，不写入 session transcript，也不在进程重启或多个 DSH 实例之间共享。
+- **父子 Agent 不合并预算**：需要在整体上限制父子 Agent 的合计调用数时，本插件不提供这个能力。
+- **只限入口，不限内部**：见上一节的边界说明。
+- **工具名写错不会报错**：配置里写一个不存在的工具名不会触发任何校验错误，只是那条规则永远不生效（因为没有任何调用会用它匹配）。工具名必须与 DSH 注册名逐字一致。
 
-1. `agent/pre-step`：同步当前 Agent 的 `(turn, step)`，并重置该 step 的计数表；
-2. `tools/pre-execute`：在工具执行前根据 `exec.name` 返回 allow 或 deny。
+## 兼容性
 
-计数状态以 live Agent 对象为 key 保存在 `WeakMap` 中。step 被拒绝、step 准备失败、turn 结束、Agent 报错或 Agent 被 dispose 时，相关状态会被清理；Cordis 也会在插件 fiber 卸载时自动移除事件监听器。
+在 **DSH v0.1.5-rc.1**（2026-09）下测试通过。
 
-## 开发与验证
-
-本项目已在 DSH `0.1.5-rc.1` 下测试通过。安装依赖后可以运行：
-
-```powershell
-pnpm install
-pnpm run typecheck
-pnpm run build
-pnpm test
-```
-
-`pnpm test` 使用 Node.js 内置的 `node:test`，覆盖配置校验、配额重置、Agent 隔离、并行预占、下游拒绝、上下文缺失、生命周期清理以及原型敏感工具名等行为。检查 profile 组合配置时可以运行：
-
-```powershell
-dsh --profile web --dump-config
-```
-
-确认 bundle 中存在 `tool-call-limit`，并确认最终的 `limits` 是预期值后，再重启正在使用的 DSH Web 服务。
-
-## License
+## 许可证
 
 MIT
-
-## Credits
-
-为 [DeepSeek Harness](https://github.com/deepseek-ai/dsh) 构建。
-
-已通过 DSH v0.1.5-rc.1 测试。

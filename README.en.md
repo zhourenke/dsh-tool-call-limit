@@ -2,70 +2,73 @@
 
 # @zhourenke/dsh-tool-call-limit
 
-`@zhourenke/dsh-tool-call-limit` is a DeepSeek Harness Cordis plugin that limits calls entering the DSH `ToolRuntime`. Its policy is scoped by:
+**Per-step tool call quotas for DSH: calls beyond the quota in the same step are denied outright.**
 
-> one independent call quota for each live Agent, turn, step, and tool name.
+A DSH Agent may issue several tool calls in parallel within one step, and may retry the same tool repeatedly. This plugin checks a quota by **registered name** before the tool actually runs: if a slot is left it passes through, if not it denies — **it only throttles, it never changes what a tool does**. Install and go; no DSH source changes needed.
 
-The plugin does not need to import tools statically. Any call that passes through the DSH `ToolRuntime` can be limited by its registered name.
+## What it solves
 
-## Quick configuration
+- **Repeated calls to the same tool within one step**: with `web_search: 1`, a second call in the same step is denied instead of letting the Agent keep spending
+- **Disabling a tool entirely**: set `0` and every call to it is denied in that step
+- **Parallel calls cannot overshoot**: the quota is reserved **synchronously** before the call, so of two parallel `web_search` calls only one gets through
+- **Parent and child Agents stay separate**: a subagent has its own quota and does not eat the parent's allowance
+- **Removable at any time**: inserted at the profile layer, it does not modify DSH itself
 
-The plugin does not impose limits by default:
-
-```yaml
-limits: {}
-```
-
-Enable limits in the profile patch, for example:
-
-```yaml
-# $DSH_HOME/profiles/web/cordis.patch.yml
-- id: tool-call-limit
-  name: '@zhourenke/dsh-tool-call-limit'
-  config:
-    limits:
-      web_search: 1
-      # web_fetch is omitted, so this plugin does not limit it
-```
-
-This configuration allows at most one DSH `web_search` call for the same Agent in the same step. The next step starts with a fresh quota, and other Agents have separate quotas. `web_fetch` is not specially exempted; it remains unlimited because it is omitted from `limits`. It can be limited independently if needed.
-
-The `cordis.patch.yml` in this repository only inserts the plugin into a bundle. It does not define tool limits. Put the effective rules in the target profile patch so the profile controls which limits are enabled.
-
-## Compatibility
-
-Tested with **DSH v0.1.5-rc.1** (September 2026). The plugin requires the following runtime packages:
-
-- `@deepseek-ai/schemastery` (configuration schema)
-- `@deepseek-ai/dsh-agent` (Agent interface)
-- `@deepseek-ai/dsh-tools` (tool pipeline)
-- `@deepseek-ai/cordis` (plugin framework)
-
-Install dependencies before use with the corresponding DSH version.
-
-## Installation and activation
-
-Install the package through the DSH profile manager:
+## Installation
 
 ```powershell
 dsh plugin --profile web add "github:zhourenke/dsh-tool-call-limit"
 ```
 
-Then add the plugin configuration to the target profile's `cordis.patch.yml`. To uninstall it:
+**A DSH restart is required for it to take effect** — the plugin is loaded by the loader at process start, so refreshing the page does nothing.
+
+Uninstall:
 
 ```powershell
 dsh plugin --profile web remove @zhourenke/dsh-tool-call-limit
 ```
 
-Restart the existing DSH Web service after installing the plugin or changing the profile configuration so the new bundle and configuration are loaded. Then refresh the existing `http://127.0.0.1:3080`. This plugin does not start a replacement server and does not rely on client HMR.
+## Quick start
+
+By default the plugin limits **nothing** (`limits: {}`). To enable limits, edit `~/.dsh/profiles/web/cordis.patch.yml`:
+
+```yaml
+- insert:
+    - id: tool-call-limit
+      name: '@zhourenke/dsh-tool-call-limit'
+      config:
+        limits:
+          web_search: 1
+```
+
+This allows the same Agent at most one `web_search` call per step; the next step gets a fresh quota, and other Agents have their own.
+
+**Any tool not listed in `limits` is completely unlimited** — `web_fetch` is unlimited only because it is omitted; configure it separately if you want it capped.
+
+A restart is needed here too. To confirm the configuration was loaded:
+
+```powershell
+dsh --profile web --dump-config
+```
+
+If the output contains `tool-call-limit` with the expected `limits`, it is in effect.
+
+> The `cordis.patch.yml` shipped in this repository only inserts the plugin into a bundle. It defines **no** limit rules. Real rules always live in the profile patch, so the profile decides which are enabled.
 
 ## Configuration
 
-The configuration has one field:
+| Field | Type | Default | Meaning |
+|---|---|:---:|---|
+| `limits` | object | `{}` | Map from registered tool name to the maximum calls allowed **per step**. Omitted tools are unlimited. |
 
-| Field | Default | Meaning |
-|---|---:|---|
-| `limits` | `{}` | A map from registered tool name to its maximum calls per step. Omitted tools are unlimited. |
+Value rules:
+
+- `0` denies **every** call to that tool in the step;
+- a positive integer is the maximum number of calls allowed per step;
+- negative numbers, fractions, strings, `NaN`, `Infinity`, numbers outside JavaScript's safe-integer range, and arrays are all rejected;
+- `limits: null`, an omitted `limits` field, and an omitted `config` are all treated as `{}` (unlimited);
+- **`*` wildcards are not supported**; every tool must be configured by name;
+- unknown configuration fields are rejected rather than silently ignored.
 
 For example:
 
@@ -76,26 +79,26 @@ limits:
   write: 0
 ```
 
-Tool names must exactly match their DSH registration names. Values must be non-negative safe integers:
+## Scope: Agent × turn × step × tool name
 
-- `0` denies every call for that tool in an active step;
-- a positive integer is the maximum number of calls allowed in each step;
-- negative numbers, fractions, strings, `NaN`, infinity, numbers outside JavaScript's safe-integer range, and arrays are rejected;
-- `limits: null`, an omitted `limits` field, and an omitted configuration are normalized as `{}`;
-- `*` wildcards and a separate exemption syntax are not supported;
-- unknown configuration fields are rejected.
+Quotas are counted along four dimensions; a difference in any one of them means a **separate** quota:
 
-## Counting semantics
+| Dimension | Meaning |
+|---|---|
+| Agent | A parent Agent and a child Agent created by `subagent` are different live Agent objects with independent counters; they are **not merged into one aggregate budget** |
+| turn | Each step within a turn counts separately |
+| step | **The reset unit** — entering a new step clears the counters and restores the full allowance |
+| tool name | Each tool name is counted separately, so a `web_search` call does **not** consume the quota for `web_fetch` or `grep` |
 
-The plugin records the Agent's current turn and step in `agent/pre-step`, creating a fresh counter map for each new step. `tools/pre-execute` then checks the tool name before the tool body runs.
+## How quota is consumed
 
-When a call passes this plugin, its quota is reserved synchronously before `next()` is called. This prevents parallel calls in the same step from observing the same remaining slot. With `web_search: 1`, for example, only one of two parallel `web_search` calls can continue through the rest of the pipeline.
+- **Reserved synchronously before the call**: the slot is taken **before** `next()` is invoked, so parallel calls in the same step cannot observe the same remaining slot. With `web_search: 1`, only one of two parallel `web_search` calls continues through the rest of the pipeline.
+- **Passing consumes it, with no refund**: a call consumes a slot as soon as it passes the limiter. It is **not** refunded if the tool later fails, is cancelled, times out, or is denied by a later policy.
+- **Denied calls consume nothing further**: a call that is already over the limit does not take another slot.
 
-A call consumes its quota as soon as it passes the limiter. The reservation is not refunded if the tool later fails, is cancelled, times out, or is denied by a later policy. An attempt that is already over the limit does not consume another slot. Tool names have separate counters, so a `web_search` call does not consume the quota for `web_fetch` or `grep`.
+## What you see when a call is denied
 
-A configured tool is denied fail-closed when its call has no Agent or when that Agent has no active state created by `agent/pre-step`. An unconfigured tool is unaffected by this context requirement and continues through the rest of the pipeline.
-
-Denials use stable English reasons:
+Denials use three **stable English** reason texts:
 
 ```text
 tool <name> exceeded its per-step limit of <n>
@@ -103,59 +106,39 @@ per-step tool limit requires an agent context
 per-step tool limit has no active agent step
 ```
 
-## Agents, subagents, and Code Mode
+The first means the quota is exhausted; the last two mean the Agent context is missing or the Agent has no active step, in which case the plugin fails closed (denies rather than allows). **On the first one, do not retry the same tool** — the quota only returns in the next step.
 
-A parent Agent and a child Agent created by `subagent` use different live Agent objects, so they have independent counter state by default. The plugin does not automatically combine parent and child Agents into one aggregate budget.
+## Key points for Agents
 
-Tool calls made inside Code Mode count when they re-enter the DSH `ToolRuntime`, using the owning Agent's current step. The outer `run_code` call is limited only if `run_code` is also present in `limits`; otherwise it remains unlimited.
+- This plugin **provides no tools and no model-visible interface**; it is fully transparent to the model and constrains **the DSH tools you were already going to call**
+- A denial shows up as a **failed tool call** (returning one of the three reasons above), not as a silent slowdown
+- Do not retry the same tool within the same step; the quota does not recover mid-step
+- Names in the configuration must be DSH **registration names**, such as `web_search`, `web_fetch`, `grep`, `write`, `bash`, `run_code`
 
-## Enforcement boundary
+## What it does not cover (enforcement boundary)
 
-This plugin limits **the number of calls entering the DSH `ToolRuntime`**, not the number of operations performed inside a tool implementation. It does not directly limit:
+This plugin limits **the number of calls entering the DSH `ToolRuntime`**, not the number of operations performed inside a tool implementation. It does not limit:
 
-- multiple queries issued internally by one `web_search` call;
+- multiple queries issued inside one `web_search` call;
 - HTTP requests or native server-tool uses performed inside a Web provider;
 - multiple shell commands executed inside one `bash` call;
-- multiple API requests initiated internally by an MCP or other custom tool.
+- multiple API requests initiated by an MCP or other custom tool.
 
-To limit the number of queries in one `web_search` call, configure the Web tool's `searchMaxQueries` separately. If a provider exposes `maxUses`, configure that separately as well. Those are lower-level controls and are distinct from this ToolRuntime call quota.
+To cap the number of queries in one `web_search` call, configure the Web tool's `searchMaxQueries` separately, and configure `maxUses` separately where a provider exposes it. Those are at a **different layer** from this plugin's ToolRuntime call quota.
 
-Likewise, `maxParallelToolCalls` limits concurrency, not the total number of calls in one step; this plugin provides the latter. The plugin keeps its state in the current DSH process memory. It does not write to the session transcript and does not share counters across process restarts or separate DSH instances.
+`maxParallelToolCalls` limits **concurrency**, not the total number of calls per step — this plugin provides the latter, and the two are complementary.
 
-## How it works
+## Known limitations (verified)
 
-The plugin uses two public extension points:
+- **Counted per process**: state lives in the current DSH process memory. It is not written to the session transcript and is not shared across process restarts or separate DSH instances.
+- **Parent and child budgets are not merged**: the plugin cannot cap the combined call count of a parent Agent and its subagents.
+- **Entry point only, not internals**: see the boundary section above.
+- **A misspelled tool name raises no error**: an unknown name in the configuration triggers no validation error; the rule simply never applies, because no call will ever match it. Tool names must match DSH registration names exactly.
 
-1. `agent/pre-step` synchronizes the Agent's `(turn, step)` and resets that step's counter map;
-2. `tools/pre-execute` returns allow or deny before the tool executes, based on `exec.name`.
+## Compatibility
 
-Live Agent objects are keys in a `WeakMap`. State is cleared when a step is rejected or fails during preparation, when a turn stops, when the Agent reports an error, or when the Agent is disposed. Cordis also removes the event listeners automatically when the plugin fiber is unloaded.
-
-## Development and verification
-
-This project is tested with DSH `0.1.5-rc.1`. After installing dependencies, run:
-
-```powershell
-pnpm install
-pnpm run typecheck
-pnpm run build
-pnpm test
-```
-
-`pnpm test` uses Node.js's built-in `node:test` and covers configuration validation, quota reset, Agent isolation, synchronous parallel reservation, downstream denial, missing context, lifecycle cleanup, and prototype-sensitive tool names. To inspect the composed profile configuration, run:
-
-```powershell
-dsh --profile web --dump-config
-```
-
-Confirm that the bundle contains `tool-call-limit` and that the final `limits` have the intended values before restarting the DSH Web service in use.
+Tested with **DSH v0.1.5-rc.1** (September 2026).
 
 ## License
 
 MIT
-
-## Credits
-
-Built for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
-
-Tested with DSH v0.1.5-rc.1.
