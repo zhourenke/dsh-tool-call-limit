@@ -126,7 +126,7 @@ return next()
 
 `devDependencies` 中的三个宿主包**钉死到精确版本**（`4.0.2` / `0.1.5-rc.1` / `0.1.5-rc.1`）：连接点安装时插件解析到的是自己 `node_modules` 里的副本，写范围就会对着与线上不同的宿主做类型检查与测试。
 
-DSH 升级后按 `PLUGIN_RELEASE_GUIDE.md` §8 重新核对事件名、宿主符号与 peer 范围。
+DSH 升级后按 `PLUGIN_RELEASE_GUIDE.md`「DSH 升级后的复核」重新核对事件名、宿主符号与 peer 范围。
 
 ## 许可证
 
