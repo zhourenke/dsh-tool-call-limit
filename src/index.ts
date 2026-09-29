@@ -110,16 +110,21 @@ interface StepState {
 /**
  * Copy validated limits into a prototype-safe Map for hot-path lookups.
  *
- * The Config schema already rejects unusable numbers, but `apply()` can also be
- * called programmatically and bypass the schema. Reject rather than skip:
- * silently dropping an entry would leave that tool unlimited, which is the same
- * class of failure as "the limiter quietly does nothing". Throwing here runs
- * before any listener is registered, so a bad configuration never leaves a
- * half-installed plugin behind.
+ * The Config schema already rejects unusable numbers and shapes, but `apply()`
+ * can also be called programmatically and bypass the schema. Validate both the
+ * shape and each value, and reject rather than skip: a `Map` would read as
+ * "no keys" (so every tool silently becomes unlimited) and an array would
+ * install quotas for tools literally named "0" and "1". Silently doing nothing
+ * is the same class of failure as a limiter that quietly never fires. Throwing
+ * here runs before any listener is registered, so a bad configuration never
+ * leaves a half-installed plugin behind.
  *
  * @see PLUGIN_RELEASE_GUIDE.md 「`Config` 的 schema 不保证数值可用」
  */
 function resolveLimits(limits: Readonly<Record<string, number>>): ReadonlyMap<string, number> {
+  if (!isPlainRecord(limits)) {
+    throw new Error('[tool-call-limit] limits must be a plain object mapping tool names to quotas')
+  }
   const result = new Map<string, number>()
   for (const key of Object.keys(limits)) {
     const limit = limits[key]

@@ -288,3 +288,32 @@ test('an invalid quota passed programmatically is rejected before any listener i
     assert.deepEqual(registrations, [], 'a rejected configuration must register nothing')
   }
 })
+
+test('a non-plain-object limits map is rejected instead of silently disabling every limit', () => {
+  // `Object.keys(new Map(...))` is empty, so a Map would read as "no limits"
+  // and leave every tool unlimited with no error whatsoever. An array would
+  // install quotas for tools literally named "0" and "1". Both must fail
+  // loudly, and before registration.
+  for (const limits of [new Map([['web_search', 1]]), [1, 2], 'web_search', 5, true]) {
+    const registrations = []
+    const ctx = {
+      on(eventName) {
+        registrations.push(eventName)
+        return () => true
+      },
+    }
+
+    assert.throws(
+      () => apply(ctx, { limits }),
+      /limits must be a plain object/,
+      `apply must reject a ${limits?.constructor?.name ?? typeof limits} limits map`,
+    )
+    assert.deepEqual(registrations, [], 'a rejected configuration must register nothing')
+  }
+
+  // `null` / `undefined` still mean "no limits": both are normalised away
+  // before this guard is reached, matching the schema's `.default({})`.
+  for (const limits of [null, undefined]) {
+    assert.doesNotThrow(() => apply({ on: () => () => true }, { limits }))
+  }
+})
