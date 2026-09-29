@@ -264,3 +264,27 @@ test('prototype-sensitive tool names do not inherit object properties', async ()
     })
   }
 })
+
+test('an invalid quota passed programmatically is rejected before any listener is registered', () => {
+  // `Config` catches these for real users, but `apply` is a public entry point
+  // too. Skipping the entry silently would leave that tool unlimited: the
+  // limiter would look installed and do nothing at all. Throwing must also
+  // happen before registration, or a rejected config leaves a half-installed
+  // plugin behind.
+  for (const value of [Number.NaN, 1.5, -1, Number.MAX_SAFE_INTEGER + 1]) {
+    const registrations = []
+    const ctx = {
+      on(eventName) {
+        registrations.push(eventName)
+        return () => true
+      },
+    }
+
+    assert.throws(
+      () => apply(ctx, { limits: { web_search: value } }),
+      /must be a non-negative safe integer/,
+      `apply must reject ${String(value)}`,
+    )
+    assert.deepEqual(registrations, [], 'a rejected configuration must register nothing')
+  }
+})

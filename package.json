@@ -1,7 +1,7 @@
 {
   "name": "@zhourenke/dsh-tool-call-limit",
   "description": "Per-agent per-step ToolRuntime call limits for DeepSeek Harness",
-  "version": "0.1.0",
+  "version": "0.1.7-rc2.1",
   "publishConfig": {
     "access": "public"
   },
@@ -12,12 +12,14 @@
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
+  "icon": "./icon.svg",
   "exports": {
     ".": {
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "dsh": {
     "bundle": {
@@ -27,7 +29,9 @@
   "files": [
     "lib/index.js",
     "lib/types/**/*.d.ts",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -36,12 +40,12 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.2"
+    "@deepseek-ai/schemastery": "~3.18.4"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh-agent": "^0.1.5-rc.1",
-    "@deepseek-ai/dsh-tools": "^0.1.5-rc.1"
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-agent": "^0.1.7-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.1.7-rc.2"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
@@ -55,10 +59,10 @@
     }
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.2",
-    "@deepseek-ai/dsh-agent": "0.1.5-rc.1",
-    "@deepseek-ai/dsh-tools": "0.1.5-rc.1",
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-agent": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-tools": "0.1.7-rc.2",
     "@types/node": "^22.20.2",
-    "typescript": "^5.9.2"
+    "typescript": "5.9.3"
   }
 }

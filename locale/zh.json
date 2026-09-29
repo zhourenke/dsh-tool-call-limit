@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "工具调用配额",
+    "description": "在 ToolRuntime 入口按每个 Agent、每个 step 强制工具调用配额，用尽后直接拒绝调用。"
+  }
+}

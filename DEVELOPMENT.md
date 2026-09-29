@@ -9,8 +9,10 @@
 | `src/index.ts` | 全部实现，单文件 |
 | `lib/index.js` | 编译产物，**必须提交**（路线 A） |
 | `lib/types/index.d.ts` | 类型声明，**必须提交** |
-| `test/core.test.mjs` | 对编译产物的执行测试（14 项） |
+| `test/core.test.mjs` | 对编译产物的执行测试（15 项） |
 | `cordis.patch.yml` | profile 层插入声明 |
+| `locale/{en,zh}.json` | 插件列表的显示元数据（名称与说明，DSH 0.1.7 起） |
+| `icon.svg` | 插件列表图标；宿主读成内联 data URL |
 
 ## 本地开发与构建
 
@@ -93,7 +95,9 @@ return next()
 
 未知字段抛 `unknown configuration field(s): …` 而不是忽略。配置只有 `limits` 一个字段，静默忽略只会让拼错的字段名变成一条永不生效的规则——那比报错难查得多。
 
-`resolveLimits()` 里保留了一道 `Number.isSafeInteger(limit) && limit >= 0` 的复查：schema 已经校验过，但**直接以编程方式调用 `apply()`** 可以绕过 schema，这道守卫保证那条路径也不会引入非法配额。
+`resolveLimits()` 里还有一道 `Number.isSafeInteger(limit) && limit >= 0` 的复查，且**是抛错而不是跳过**：schema 已经校验过，但**直接以编程方式调用 `apply()`** 可以绕过 schema。跳过非法条目会让那个工具变成"不限"——插件看起来装了却在静默放行，与"限速器悄悄不工作"是同一类故障。抛错位置在注册任何监听器之前（`apply` 的第一行），所以被拒的配置不会留下半注册的插件。
+
+> 实测：本插件的 schema 用 `z.natural()`（带整数校验），`NaN` 会被 `expected number multiple of 1 but got NaN` 挡下——「`NaN` 能穿过 `z.number()`」那个洞只在只有 `.min()`/`.max()` 而无整数约束时成立。这道守卫兜的是绕过 schema 的那条路径。
 
 ## 测试要点
 
@@ -105,13 +109,44 @@ return next()
 - **上下文缺失**：无 Agent、无 step 状态时的两条 fail-closed reason
 - **生命周期清理**：`reject` / `turn-stopping` / `error` / `disposed` 后状态确实被移除
 - **原型敏感工具名**：`__proto__`、`constructor`、`toString` 作为工具名能正常配置与计数
+- **非法配额 fail-loud**：直接调 `apply()` 传 `NaN` / `1.5` / `-1` / 超安全整数时抛错，且 `on()` 一次都没被调用——不留半注册状态
 
 ## 发布纪律
 
 - **`lib/` 必须提交，且与 `src/` 同一次提交。** `dsh plugin add github:...` 只接收 git 跟踪的文件，本仓库不在安装时构建，所以产物不同步会让 GitHub 安装静默运行旧代码。
 - **不要添加 `prepare` 脚本。** git 托管的包会在安装时执行它，而 pnpm 默认拦截依赖的构建脚本，这会让 `dsh plugin add` 直接失败，直到用户手动在 profile 的 `pnpm-workspace.yaml` 中放行。
-- **`files` 只列不会被自动包含的产物。** 当前为 `lib/index.js`、`lib/types/**/*.d.ts`、`cordis.patch.yml`。`package.json` / `README*` / `LICEN[CS]E*` 以及 `main` 指向的文件无论如何都会装上，列了是空操作；而 `types` 与 `exports` 的目标**不在**自动包含集里，`.d.ts` 一旦漏出 `files` 就会被静默丢弃——插件照常加载，只是不带类型。
+- **`files` 只列不会被自动包含的产物。** 当前为 `lib/index.js`、`lib/types/**/*.d.ts`、`cordis.patch.yml`、`icon.svg`、`locale/*.json`。`package.json` / `README*` / `LICEN[CS]E*` 以及 `main` 指向的文件无论如何都会装上，列了是空操作；而 `types`、`exports`、`icon` 与 `locale/*.json` 的目标**不在**自动包含集里，漏出 `files` 就会被静默丢弃——插件照常加载，只是没有类型、没有图标、没有名称。
 - 新增产物（第二入口、运行时读取的数据文件）时，必须同步放宽 `files`，并用 `pnpm pack --dry-run` 核对真实载荷。
+
+## 显示元数据与准入闸门（DSH 0.1.7 起）
+
+0.1.7 新增两条**不执行插件代码**的宿主读取路径，两者都极易假绿，各需一条专门的自检：
+
+| 路径 | 宿主函数 | 失败模式 |
+|---|---|---|
+| 准入闸门（装载期） | `evaluatePluginCompatibility(manifest, exemptions, runtimeVersion)` | 判定失败 → 该 bundle 记入 `skippedBundles` 并抛错 |
+| 显示元数据（装载前） | `readPluginMeta(specifier, parentURL)` | 返回 `undefined`，**不报错**；插件照常工作，只是列表里没有名字 |
+
+```powershell
+$cwdU = $PWD.Path -replace '\\','/'
+$dshU = "<DSH 安装目录>\node_modules\@deepseek-ai" -replace '\\','/'
+# 闸门：用的就是装载时那一次判定
+node -e "import('file:///$dshU/dsh-app-boot/lib/index.js').then(b => { const m = JSON.parse(require('fs').readFileSync('$cwdU/package.json','utf8')); const i = b.evaluatePluginCompatibility(m, undefined, b.getDshRuntimeVersion()); console.log(i ? 'CONFLICT: ' + b.pluginCompatibilityWarning(i) : 'COMPATIBLE'); })"
+# 元数据
+node -e "import('file:///$dshU/dsh-app-boot/lib/index.js').then(async b => { const p = require('path'), u = require('url'); const parent = u.pathToFileURL(p.join(process.env.USERPROFILE, '.dsh/profiles/web/package.json')).href; const n = JSON.parse(require('fs').readFileSync('$cwdU/package.json','utf8')).name; console.log(JSON.stringify(b.readPluginMeta(n, parent))); })"
+```
+
+2026-09 对 0.1.7-rc.2 的实测结果分别是 `COMPATIBLE`，以及含 `title`/`description`/`icon` 的对象（图标已解析成内联 data URL）。
+
+**元数据为什么必须单列一条**：它由宿主在**装载之前**直接读包内文件取得，因此任何运行时测试都覆盖不到——`apply` 的用例全绿，插件列表里照样可能没有名字。反过来，它失败时插件本身照常工作，症状只出现在界面上。
+
+要点：
+
+- `parentURL` 必须是**插件实际解析得到的那棵树**的基址；给错目录时返回 `undefined` **而不是报错**，所以断言要查"返回值里有没有 `title`/`description`/`icon`"，只看"有没有抛错"会假绿。
+- `locale/*.json` 必须显式声明 `exports` 子路径（`"./locale/*.json": "./locale/*.json"`）——资源解析走 `exports`。
+- `title` / `description` 为空或非字符串是**抛错**；图标失败只保留显示文字。两者失败模式不对称。
+- `icon.svg` 与 `locale/*.json` 都不在 `files` 的自动包含集里，必须自己列上。
+- 闸门的 `includePrerelease: true` 比范围本身宽松得多：它拦不住"忘了跟着宿主升级的范围"（`^0.1.5-rc.1` 照样通过），只拦跨 minor 的硬漂移。**范围对齐仍要人工做**，闸门只是兜底。
 
 ## 运行时依赖（与 DSH 版本匹配）
 
@@ -119,12 +154,14 @@ return next()
 
 | 包 | 版本 | 用途 |
 |---|---|---|
-| `@deepseek-ai/cordis` | `^4.0.2` | 插件框架（走自己的版本线） |
-| `@deepseek-ai/dsh-agent` | `^0.1.5-rc.1` | `agent/pre-step` 等 Agent 事件 |
-| `@deepseek-ai/dsh-tools` | `^0.1.5-rc.1` | `tools/pre-execute` 工具管线 |
-| `@deepseek-ai/schemastery` | `^3.18.2` | 配置校验，**唯一真实的 `dependencies`** |
+| `@deepseek-ai/cordis` | `^4.0.4` | 插件框架（走自己的版本线） |
+| `@deepseek-ai/dsh-agent` | `^0.1.7-rc.2` | `agent/pre-step` 等 Agent 事件 |
+| `@deepseek-ai/dsh-tools` | `^0.1.7-rc.2` | `tools/pre-execute` 工具管线 |
+| `@deepseek-ai/schemastery` | `~3.18.4` | 配置校验，**唯一真实的 `dependencies`** |
 
-`devDependencies` 中的三个宿主包**钉死到精确版本**（`4.0.2` / `0.1.5-rc.1` / `0.1.5-rc.1`）：连接点安装时插件解析到的是自己 `node_modules` 里的副本，写范围就会对着与线上不同的宿主做类型检查与测试。
+`devDependencies` 中的三个宿主包**钉死到精确版本**（`4.0.4` / `0.1.7-rc.2` / `0.1.7-rc.2`）：连接点安装时插件解析到的是自己 `node_modules` 里的副本，写范围就会对着与线上不同的宿主做类型检查与测试。
+
+`schemastery` 写 `~3.18.4` 而不是 `^3.18.2`：宿主各包统一声明 `~3.18.4`，范围写宽会让本包解析到另一份实体，`Config` 的导出类型随即报 `TS2883`（无法命名）。实测对齐后 `pnpm why @deepseek-ai/schemastery` 只剩一个版本，`typecheck` 与 `build` 都退出 0。
 
 DSH 升级后按 `PLUGIN_RELEASE_GUIDE.md`「DSH 升级后的复核」重新核对事件名、宿主符号与 peer 范围。
 

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Tool Call Limit",
+    "description": "Enforces per-agent, per-step tool call quotas by denying calls at the ToolRuntime gate once a step's allowance is used up."
+  }
+}
