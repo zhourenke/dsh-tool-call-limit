@@ -117,10 +117,11 @@ The first means the quota is exhausted; the last two mean the Agent context is m
 
 ### `onExceeded: "ask"`: hand each over-quota call to you
 
-With `ask`, an exhausted quota no longer rejects outright — it **asks you once**: approve and that one call proceeds, decline and it is handled as the first reason above. It uses the DSH 0.2.0 approval channel, so three things are worth knowing:
+With `ask`, an exhausted quota no longer rejects outright — it **requests authorisation once**: approve and that one call proceeds, decline and it is handled as the first reason above. It uses the DSH 0.2.0 approval channel, so four things are worth knowing:
 
 - **Every over-quota call is confirmed again.** The quota itself does not rise when you approve — `ask` hands you the "should this be an exception?" decision, it does not raise the limit.
-- **It degrades to a denial when no approval channel is available**, rather than silently allowing the call because `ask` was configured. An approval service that is not enabled counts as unavailable.
+- **The session's approval policy must be `ask`, or nothing is shown.** The policy has only two values, `ask` and `never`, chosen by the permission preset: `read-only` / `workspace-write` are `ask`, `danger-full-access` is `never`. Under `never` the host **never hands the request to the UI at all** — the approval service returns a refusal internally, even though the UI is right there.
+- **You will then see `the user rejected tool "<name>"` although nobody rejected anything.** The host reuses the "a human said no" branch, so "nobody was asked" and "a human said no" are indistinguishable on that path. **On seeing that line, check the session's approval policy rather than hunting for the person who refused.**
 - **The other two failure paths ignore `onExceeded`**: a missing Agent context or no active step always fails closed.
 
 ## Key points for Agents

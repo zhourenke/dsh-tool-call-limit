@@ -179,6 +179,24 @@ node -e "import('file:///$dshU/dsh-app-boot/lib/index.js').then(async b => { con
 
 `tools/pre-execute` 上的官方监听器只有一个：`dsh-workspace-changes`（记录器，读 `exec.agent?.session`）。权限与审批体系**不在这条缝上**——`dsh-permission-presets` 与 `dsh-user-approval` 挂的是 `internal/dispatch` 与 `session/created`。
 
+### 实测：0.2.0-rc.2 上运行的真实结果
+
+重启后在**一个 step 内同批**发出 `web_fetch` + `web_search` ×2，profile 配置为 `{limits: {web_search: 1, web_fetch: 0}, onExceeded: ask}`：
+
+| 调用 | 结果 |
+|---|---|
+| `web_fetch`（配额 0） | 拒绝 |
+| `web_search` 第 1 次 | 放行 |
+| `web_search` 第 2 次（同 step） | 拒绝 |
+| 新 step 的 `web_search` 第 1 次 | 放行 |
+| 新 step 的 `web_search` 第 2 次 | 拒绝 |
+
+一次跑通四条链路：配额生效、**同步预占**（同批并行调用只有一个通过）、**step 重置**（新 step 的第一次放行——若计数没重置，它会因上一 step 已用满而被拒，所以这一格同时验证了重置）、以及未配置的工具不受影响。
+
+观察到的拒绝文案是 **`the user rejected tool "<name>"`**，而不是本插件自己的 `tool <name> exceeded its per-step limit of <n>`。这恰好是 `onExceeded` 生效的指纹：`deny` 会把插件写的 reason 原样传出，`ask` 则被 `dsh-tools` 替换成审批通道的文案。
+
+**反直觉的坑：审批策略为 `never` 时 `ask` 不弹窗。** `dsh-user-approval` 的 `decide()` 先查策略，`never` 直接返回 `"rejected"`——**在派发给任何 answerer 之前**，所以界面根本收不到请求；而 `dsh-tools` 把 `rejected` 映射成 `the user rejected tool "…"`，于是"没人问过"和"人说了不"在这条路径上分不出来。策略由 permission preset 决定（本例 `danger-full-access` → `never`），且 preset 在会话初始化时会写入一条 session override，**优先级高于 `approval` 服务自己的 `config.policy`**（`effectivePolicy = overrideOf(session) ?? config.policy ?? "ask"`），所以单独给 `approval` 配 `policy: ask` 会被它盖住——要看到真正的弹窗只能切 preset。
+
 > **搜索范围必须是递归的。** `Get-ChildItem "$dsh\dsh-*\lib\*.js"` 只覆盖各包 `lib/` 的**顶层**（本次 453 个文件），而事件名等字符串有相当一部分落在 `lib/types/*.js` 里——用非递归形式搜会得到**全 0 的假红**，且文件数不为 0 也照样发生。可靠形式是 `Get-ChildItem $dsh -Recurse -Include *.js -File`。
 
 ## 运行时依赖（与 DSH 版本匹配）
