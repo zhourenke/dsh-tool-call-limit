@@ -58,13 +58,14 @@ If the output contains `tool-call-limit` with the expected `limits`, it is in ef
 > ⚠️ **The configuration must use the `- id:` override form, not `- insert:`.** The bundle patch shipped with the plugin already inserted this row with `insert`; inserting again in the profile raises **no error** but adds a second row with the same id — the plugin runs twice and quotas are counted twice. The only difference is the action: `- id:` looks the entry up by id and overrides it, `- insert:` appends unconditionally.
 >
 > - **`name` may be omitted** (the override matches on `id` alone); but if you do write it, it must match **exactly** — one wrong letter silently does nothing and leaves a single warning line in the log.
-> - **`config:` replaces the whole config object, it is not merged key by key.** This plugin's `config` has only the `limits` field, so writing it in full is all there is to it.
+> - **`config:` replaces the whole config object, it is not merged key by key.** This plugin's `config` has only the `limits` and `onExceeded` fields, so writing it in full is all there is to it.
 
 ## Configuration
 
 | Field | Type | Default | Meaning |
 |---|---|:---:|---|
 | `limits` | object | `{}` | Map from registered tool name to the maximum calls allowed **per step**. Omitted tools are unlimited. |
+| `onExceeded` | `"deny"` \| `"ask"` | `"deny"` | What happens once a quota runs out: `deny` rejects outright; `ask` asks you every time. |
 
 Value rules:
 
@@ -73,7 +74,8 @@ Value rules:
 - negative numbers, fractions, strings, `NaN`, `Infinity`, numbers outside JavaScript's safe-integer range, and arrays are all rejected;
 - `limits: null`, an omitted `limits` field, and an omitted `config` are all treated as `{}` (unlimited);
 - **`*` wildcards are not supported**; every tool must be configured by name;
-- unknown configuration fields are rejected rather than silently ignored.
+- unknown configuration fields are rejected rather than silently ignored;
+- `onExceeded` accepts only `"deny"` and `"ask"`; omitting it or writing `null` means `"deny"`.
 
 For example:
 
@@ -101,9 +103,9 @@ Quotas are counted along four dimensions; a difference in any one of them means 
 - **Passing consumes it, with no refund**: a call consumes a slot as soon as it passes the limiter. It is **not** refunded if the tool later fails, is cancelled, times out, or is denied by a later policy.
 - **Denied calls consume nothing further**: a call that is already over the limit does not take another slot.
 
-## What you see when a call is denied
+## What you see when a quota runs out
 
-Denials use three **stable English** reason texts:
+By default (`onExceeded: "deny"`), denials use three **stable English** reason texts:
 
 ```text
 tool <name> exceeded its per-step limit of <n>
@@ -112,6 +114,14 @@ per-step tool limit has no active agent step
 ```
 
 The first means the quota is exhausted; the last two mean the Agent context is missing or the Agent has no active step, in which case the plugin fails closed (denies rather than allows). **On the first one, do not retry the same tool** — the quota only returns in the next step.
+
+### `onExceeded: "ask"`: hand each over-quota call to you
+
+With `ask`, an exhausted quota no longer rejects outright — it **asks you once**: approve and that one call proceeds, decline and it is handled as the first reason above. It uses the DSH 0.2.0 approval channel, so three things are worth knowing:
+
+- **Every over-quota call is confirmed again.** The quota itself does not rise when you approve — `ask` hands you the "should this be an exception?" decision, it does not raise the limit.
+- **It degrades to a denial when no approval channel is available**, rather than silently allowing the call because `ask` was configured. An approval service that is not enabled counts as unavailable.
+- **The other two failure paths ignore `onExceeded`**: a missing Agent context or no active step always fails closed.
 
 ## Key points for Agents
 
@@ -142,7 +152,7 @@ To cap the number of queries in one `web_search` call, configure the Web tool's 
 
 ## Compatibility
 
-Tested with **DSH v0.1.7-rc.2** (September 2026).
+Tested with **DSH v0.2.0-rc.2** (September 2026).
 
 The name, description and icon shown in the plugin list come from `locale/{en,zh}.json` and `icon.svg` inside the package (DSH 0.1.7 display metadata), so DSH's plugin list shows what it does without activating it.
 

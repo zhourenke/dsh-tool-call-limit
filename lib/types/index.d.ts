@@ -11,6 +11,8 @@ import z from '@deepseek-ai/schemastery';
 /** Resolved configuration accepted by {@link apply}. */
 export interface ToolCallLimitConfig {
     limits: Record<string, number>;
+    /** Enforcement for an exhausted quota; defaults to `'deny'`. */
+    onExceeded?: 'deny' | 'ask';
 }
 export declare const Config: ReturnType<typeof z.any>;
 /** Cordis plugin name used by loader diagnostics. */

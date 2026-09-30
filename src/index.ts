@@ -67,9 +67,21 @@ const Limits = z.transform(
   true,
 ).default({})
 
+/**
+ * What happens once a configured quota is used up.
+ *
+ * `deny` is the default and the original behaviour: the call never runs.
+ * `ask` delegates to the composed approval service through DSH 0.2.0's
+ * `{ kind: 'ask' }` pre-dispatch decision: the call runs only if the user
+ * approves it once, and it still denies when no approval channel exists.
+ */
+const OnExceeded = z.union([z.const('deny'), z.const('ask')]).default('deny')
+
 /** Resolved configuration accepted by {@link apply}. */
 export interface ToolCallLimitConfig {
   limits: Record<string, number>
+  /** Enforcement for an exhausted quota; defaults to `'deny'`. */
+  onExceeded?: 'deny' | 'ask'
 }
 
 /** Plugin configuration schema. An absent or null limits map means no quotas. */
@@ -80,7 +92,9 @@ const configSchema = z.transform(
       throw new z.ValidationError('expected an object configuration', options ?? {})
     }
 
-    const unknownKeys = Object.keys(value).filter((key) => key !== 'limits')
+    const unknownKeys = Object.keys(value).filter(
+      (key) => key !== 'limits' && key !== 'onExceeded',
+    )
     if (unknownKeys.length > 0) {
       throw new z.ValidationError(
         `unknown configuration field${unknownKeys.length === 1 ? '' : 's'}: ${unknownKeys.join(', ')}`,
@@ -92,8 +106,13 @@ const configSchema = z.transform(
       ...options,
       path: [...options?.path ?? [], 'limits'],
     })
+    const [onExceeded] = z.resolve(value.onExceeded, OnExceeded, {
+      ...options,
+      path: [...options?.path ?? [], 'onExceeded'],
+    })
     return {
       limits: limits as Record<string, number>,
+      onExceeded: onExceeded as 'deny' | 'ask',
     }
   },
   true,
@@ -153,6 +172,17 @@ export const inject = ['tools', 'agents']
  */
 export function apply(ctx: Context, config: ToolCallLimitConfig): void {
   const limits = resolveLimits(config?.limits ?? {})
+
+  // Same fail-loud discipline as the limits map: a programmatic caller can
+  // bypass the schema, and an unrecognised value here would silently pick a
+  // different enforcement than the caller asked for. Checked before any
+  // listener is registered.
+  const onExceeded = config?.onExceeded ?? 'deny'
+  if (onExceeded !== 'deny' && onExceeded !== 'ask') {
+    throw new Error(
+      `[tool-call-limit] onExceeded must be "deny" or "ask", got ${String(onExceeded)}`,
+    )
+  }
   // Keep state private to this plugin fiber. A reload therefore cannot reuse
   // reservations created by a previous configuration instance.
   const states = new WeakMap<Agent, StepState>()
@@ -225,10 +255,22 @@ export function apply(ctx: Context, config: ToolCallLimitConfig): void {
 
     const used = state.used.get(exec.name) ?? 0
     if (used >= max) {
-      return Promise.resolve({
-        kind: 'deny',
-        reason: `tool ${exec.name} exceeded its per-step limit of ${max}`,
-      })
+      const reason = `tool ${exec.name} exceeded its per-step limit of ${max}`
+      if (onExceeded === 'ask') {
+        // Deliberately does not reserve a slot: the approval outcome is decided
+        // after this listener returns, so the counter keeps counting
+        // auto-allowed calls only. Every call past the quota is therefore
+        // authorised individually, which is the entire point of `ask`.
+        return Promise.resolve({
+          kind: 'ask',
+          reason: `${reason}; requesting approval for one more call`,
+          displayReason: {
+            en: `Allow one more call to ${exec.name} this step? (per-step limit: ${max})`,
+            zh: `允许本 step 再调用一次 ${exec.name}？（每 step 上限 ${max}）`,
+          },
+        })
+      }
+      return Promise.resolve({ kind: 'deny', reason })
     }
 
     // Do not move this reservation after `next()`: sibling calls may enter

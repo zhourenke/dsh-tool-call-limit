@@ -87,14 +87,15 @@ test('apply registers the step tracker and the quota gate at the right extension
   }
 })
 
-test('the default configuration has no limits', () => {
-  assert.deepEqual(Config(), { limits: {} })
-  assert.deepEqual(Config({ limits: null }), { limits: {} })
+test('the default configuration has no limits and denies on exhaustion', () => {
+  assert.deepEqual(Config(), { limits: {}, onExceeded: 'deny' })
+  assert.deepEqual(Config({ limits: null }), { limits: {}, onExceeded: 'deny' })
 })
 
 test('configuration accepts non-negative safe integers and rejects invalid quotas', () => {
   assert.deepEqual(Config({ limits: { web_search: 0, grep: 2 } }), {
     limits: { web_search: 0, grep: 2 },
+    onExceeded: 'deny',
   })
 
   for (const value of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1, '1']) {
@@ -315,5 +316,76 @@ test('a non-plain-object limits map is rejected instead of silently disabling ev
   // before this guard is reached, matching the schema's `.default({})`.
   for (const limits of [null, undefined]) {
     assert.doesNotThrow(() => apply({ on: () => () => true }, { limits }))
+  }
+})
+
+test('onExceeded "ask" hands an exhausted quota to the approval service', async () => {
+  const harness = createHarness({ limits: { web_search: 1 }, onExceeded: 'ask' })
+  const agent = {}
+  await harness.preStep({ agent, turn: 1, step: 0 })
+
+  // Inside the quota nothing changes: the call still dispatches.
+  assert.deepEqual(await harness.preExecute({ name: 'web_search', agent }), { kind: 'allow' })
+
+  // Over quota it must ask rather than deny, and carry both locales because the
+  // approval UI resolves `displayReason` through the active locale.
+  const decision = await harness.preExecute({ name: 'web_search', agent })
+  assert.equal(decision.kind, 'ask')
+  assert.match(decision.reason, /exceeded its per-step limit of 1/)
+  assert.equal(typeof decision.displayReason.en, 'string')
+  assert.equal(typeof decision.displayReason.zh, 'string')
+  assert.match(decision.displayReason.en, /web_search/)
+  assert.match(decision.displayReason.zh, /web_search/)
+
+  // `ask` deliberately reserves no slot: the outcome lands after this listener
+  // returns, so a repeated over-quota call asks again rather than silently
+  // becoming a no-op.
+  assert.equal((await harness.preExecute({ name: 'web_search', agent })).kind, 'ask')
+
+  // Tools without a configured quota stay entirely outside the policy.
+  assert.deepEqual(await harness.preExecute({ name: 'other', agent }), { kind: 'allow' })
+})
+
+test('onExceeded defaults to deny, so the original contract is unchanged', async () => {
+  const configs = [{ limits: { web_search: 1 } }, { limits: { web_search: 1 }, onExceeded: 'deny' }]
+  for (const rawConfig of configs) {
+    const harness = createHarness(rawConfig)
+    const agent = {}
+    await harness.preStep({ agent, turn: 1, step: 0 })
+
+    assert.deepEqual(await harness.preExecute({ name: 'web_search', agent }), { kind: 'allow' })
+    assert.deepEqual(await harness.preExecute({ name: 'web_search', agent }), {
+      kind: 'deny',
+      reason: 'tool web_search exceeded its per-step limit of 1',
+    })
+  }
+})
+
+test('the schema accepts only the two documented onExceeded values', () => {
+  assert.equal(Config({ limits: {}, onExceeded: 'ask' }).onExceeded, 'ask')
+  assert.equal(Config({ limits: {}, onExceeded: 'deny' }).onExceeded, 'deny')
+  assert.equal(Config({ limits: {} }).onExceeded, 'deny')
+  assert.equal(Config({ limits: {}, onExceeded: null }).onExceeded, 'deny')
+  assert.throws(() => Config({ limits: {}, onExceeded: 'allow' }), /"deny" \| "ask"/)
+  assert.throws(() => Config({ limits: {}, onExceeded: true }), /"deny" \| "ask"/)
+  assert.throws(() => Config({ limits: {}, onExceeded: 'ask', extra: 1 }), /unknown configuration field/)
+})
+
+test('an invalid onExceeded passed programmatically is rejected before registration', () => {
+  for (const onExceeded of ['allow', 'DENY', 1, true, {}]) {
+    const registrations = []
+    const ctx = {
+      on(eventName) {
+        registrations.push(eventName)
+        return () => true
+      },
+    }
+
+    assert.throws(
+      () => apply(ctx, { limits: { web_search: 1 }, onExceeded }),
+      /onExceeded must be "deny" or "ask"/,
+      `apply must reject ${String(onExceeded)}`,
+    )
+    assert.deepEqual(registrations, [], 'a rejected configuration must register nothing')
   }
 })
