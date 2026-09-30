@@ -1,7 +1,7 @@
 {
   "name": "@zhourenke/dsh-tool-call-limit",
   "description": "Per-agent per-step ToolRuntime call limits for DeepSeek Harness",
-  "version": "0.1.7-rc2.1",
+  "version": "0.2.0-rc2.1",
   "publishConfig": {
     "access": "public"
   },
