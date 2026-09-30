@@ -120,7 +120,7 @@ per-step tool limit has no active agent step
 配成 `ask` 后，配额用尽不再直接拒绝，而是**申请一次授权**：批准则这一次调用照常执行，拒绝则按上面第一条处理。它走的是 DSH 0.2.0 的审批通道，因此有四件事需要知道：
 
 - **每一次超额调用都要重新确认一次。** 配额本身不会因为批准而提高——`ask` 只是把「要不要破例」交给你，不是把上限调大。
-- **会话的审批策略必须是 `ask`，否则不会弹窗。** 策略只有 `ask` 与 `never` 两个值，由 permission preset 决定：`read-only` / `workspace-write` 是 `ask`，`danger-full-access` 是 `never`。策略为 `never` 时宿主**根本不会把请求交给界面**，在审批服务内部就返回了拒绝——哪怕审批界面就在那里。
+- **会话的审批策略必须是 `ask`，否则不会弹窗。** 策略只有 `ask` 与 `never` 两个值，由 permission preset 决定：`read-only` / `workspace-write` 是 `ask`，`danger-full-access` 是 `never`。策略为 `never` 时宿主**根本不会把请求交给界面**，在审批服务内部就返回了拒绝——哪怕审批界面就在那里。改 preset 定义**不会回溯到已有会话**（策略是记在会话日志里的持久事实），要执行一次 `/permission <preset>` 重新应用，重启也没用。
 - **这时你会看到 `the user rejected tool "<name>"`，而并没有人拒绝过。** 宿主复用了「用户拒绝」那条分支，"没人问过" 与 "人说了不" 在这条路径上分不出来。**看到这句话先去查会话的审批策略，而不是去找那个"拒绝的人"。**
 - **后两条失败路径不受 `onExceeded` 影响**：缺少 Agent 上下文或没有有效 step 时始终 fail-closed。
 

@@ -197,6 +197,22 @@ node -e "import('file:///$dshU/dsh-app-boot/lib/index.js').then(async b => { con
 
 **反直觉的坑：审批策略为 `never` 时 `ask` 不弹窗。** `dsh-user-approval` 的 `decide()` 先查策略，`never` 直接返回 `"rejected"`——**在派发给任何 answerer 之前**，所以界面根本收不到请求；而 `dsh-tools` 把 `rejected` 映射成 `the user rejected tool "…"`，于是"没人问过"和"人说了不"在这条路径上分不出来。策略由 permission preset 决定（本例 `danger-full-access` → `never`），且 preset 在会话初始化时会写入一条 session override，**优先级高于 `approval` 服务自己的 `config.policy`**（`effectivePolicy = overrideOf(session) ?? config.policy ?? "ask"`），所以单独给 `approval` 配 `policy: ask` 会被它盖住——要看到真正的弹窗只能切 preset。
 
+### 审批弹窗的实测凭据（会话日志审计链）
+
+`/permission danger-full-access` 重新应用后（把 preset 的 `approval` 从 `never` 改成 `ask`），`web_fetch` 两次调用都走通了完整审批。凭据来自会话日志本身：`~/.dsh/sessions/<cwd>/<session>/session.v4.jsonl.zstd` 是「头部帧 + 一个快照帧 + 数百个增量帧」，**每帧独立可解压**（`zstdDecompressSync` 与 `createZstdDecompress` 都只解第一帧，会得到 288 字节的假结果——必须按 magic `28 b5 2f fd` 逐帧解再拼接）。`dsh-user-approval` 每次请求都写 `approval/asked` + `approval/decided` 配对：
+
+| seq | 事件 | 内容 |
+|---|---|---|
+| 3301 | `approval/policy` | `ask`（用户重新应用 preset） |
+| 3314 → 3315 | `asked` → `decided` | `web_fetch`，`allowed-once` |
+| 3331 → 3332 | `asked` → `decided` | `web_fetch`，`allowed-once` |
+
+三点结论：**① 审批确实弹了**——`allowed-once` 只可能来自 answerer，没有 answerer 时会是 `unavailable`；**② `ask` 不预占名额的设计被证实**——两次调用是两个不同的请求 id、两次独立授权，没有出现"批准一次之后就不再问"；**③ 记在案的原因是本插件写的那句** `tool web_fetch exceeded its per-step limit of 0; requesting approval for one more call`，说明 `ask` 的 `reason` 原样透到了审批层（`displayReason` 供界面本地化）。
+
+同一份日志也把 `never` 时期钉死了：seq 3152 / 3157 / 3167 / 3290 都是 `asked` → `decided: rejected`。**注意日志里的 "asked" 不等于"弹过窗"**——`request()` 先落 `approval/asked`，再由 `decide()` 查策略短路，所以 `never` 下同样有 asked 记录，但 answerer 瀑布从未被调用、界面什么都没显示（与"瞬间拒绝"的观察一致）。排查时不能拿 asked 记录当"确实弹过窗"的证据。
+
+**另一条容易踩的：改 preset 定义不会回溯到已有会话。** 策略是记在会话日志里的持久事实（`overrideOf()` 从日志倒着找最后一条 `approval/policy`），而 `pinInitialPermission()` 只在 `approval === null` 时才补齐，所以已 seed 的会话不受影响——**重启也没用**，恢复会话时那条旧记录仍在。必须执行一次 `/permission <preset>` 重新应用；`apply()` 比的是**值**不是 preset 名字（`spec.approval !== knobs.approval`），所以重新选当前 preset 就够，不必先切走再切回。实测顺序正是如此：改文件后单独调 `web_fetch` 仍被瞬间拒绝（seq 3290），`/permission` 之后才放行（seq 3314）。
+
 > **搜索范围必须是递归的。** `Get-ChildItem "$dsh\dsh-*\lib\*.js"` 只覆盖各包 `lib/` 的**顶层**（本次 453 个文件），而事件名等字符串有相当一部分落在 `lib/types/*.js` 里——用非递归形式搜会得到**全 0 的假红**，且文件数不为 0 也照样发生。可靠形式是 `Get-ChildItem $dsh -Recurse -Include *.js -File`。
 
 ## 运行时依赖（与 DSH 版本匹配）
