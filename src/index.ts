@@ -138,7 +138,7 @@ interface StepState {
  * here runs before any listener is registered, so a bad configuration never
  * leaves a half-installed plugin behind.
  *
- * @see PLUGIN_RELEASE_GUIDE.md 「`Config` 的 schema 不保证数值可用」
+ * @see PLUGIN_RELEASE_GUIDE.md 「类型定义原则」（§2.8）：「`Config` 只保证形状与默认值，不保证数值可用」
  */
 function resolveLimits(limits: Readonly<Record<string, number>>): ReadonlyMap<string, number> {
   if (!isPlainRecord(limits)) {
@@ -160,7 +160,14 @@ function resolveLimits(limits: Readonly<Record<string, number>>): ReadonlyMap<st
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'tool-call-limit'
 
-/** The limiter needs both the ToolRuntime and live Agent service. */
+/**
+ * Activation gate, not a service read. The plugin only ever subscribes to
+ * events and never touches `ctx.tools` / `ctx.agents`, so a reference search
+ * makes these two look removable; they are framework-consumed contract surface,
+ * and cordis withholds `apply` until each injected name is ready. Keeping them
+ * also keeps this fail-closed gate out of a host without an agent system, where
+ * an agentless dispatch of a configured tool would be denied outright.
+ */
 export const inject = ['tools', 'agents']
 
 /**

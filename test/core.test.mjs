@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { apply, Config, inject, name } from '../lib/index.js'
 
-function createHarness(rawConfig = {}) {
+function createHarness(rawConfig) {
   const listeners = new Map()
   const ctx = {
     on(name, listener) {
@@ -87,7 +87,7 @@ test('apply registers the step tracker and the quota gate at the right extension
   }
 })
 
-test('the default configuration has no limits and denies on exhaustion', () => {
+test('the default configuration has no limits and defaults to deny', () => {
   assert.deepEqual(Config(), { limits: {}, onExceeded: 'deny' })
   assert.deepEqual(Config({ limits: null }), { limits: {}, onExceeded: 'deny' })
 })
@@ -312,8 +312,9 @@ test('a non-plain-object limits map is rejected instead of silently disabling ev
     assert.deepEqual(registrations, [], 'a rejected configuration must register nothing')
   }
 
-  // `null` / `undefined` still mean "no limits": both are normalised away
-  // before this guard is reached, matching the schema's `.default({})`.
+  // `null` / `undefined` still mean "no limits" on the programmatic path:
+  // `apply` folds both with its own `?? {}` before `resolveLimits` runs. The
+  // schema is not involved here — `Limits` defaults them only inside `Config`.
   for (const limits of [null, undefined]) {
     assert.doesNotThrow(() => apply({ on: () => () => true }, { limits }))
   }

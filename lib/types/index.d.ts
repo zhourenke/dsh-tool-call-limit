@@ -17,7 +17,14 @@ export interface ToolCallLimitConfig {
 export declare const Config: ReturnType<typeof z.any>;
 /** Cordis plugin name used by loader diagnostics. */
 export declare const name = "tool-call-limit";
-/** The limiter needs both the ToolRuntime and live Agent service. */
+/**
+ * Activation gate, not a service read. The plugin only ever subscribes to
+ * events and never touches `ctx.tools` / `ctx.agents`, so a reference search
+ * makes these two look removable; they are framework-consumed contract surface,
+ * and cordis withholds `apply` until each injected name is ready. Keeping them
+ * also keeps this fail-closed gate out of a host without an agent system, where
+ * an agentless dispatch of a configured tool would be denied outright.
+ */
 export declare const inject: string[];
 /**
  * Install the step tracker and the synchronous quota gate.
