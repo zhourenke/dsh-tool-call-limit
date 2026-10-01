@@ -89,13 +89,15 @@ return next()
 - 只接受**普通记录**（原型为 `Object.prototype` 或 `null`，且非数组）；
 - 写入时用 `Object.defineProperty`，绕开遗留的 `Object.prototype.__proto__` setter；
 - 校验结果**复制进 `Map`** 供热路径查询，而不是拿原对象直接 `lookup`；
-- `*` 显式报错（`wildcard limits are not supported`），不做通配。
+- `*` 显式报错（`wildcard limits are not supported`），不做通配——**schema 与 `resolveLimits()` 两层都拦**（见下一节末段）。
 
 ### 7. 配置校验选择"拒绝未知字段"
 
 未知字段抛 `unknown configuration field(s): …` 而不是忽略。配置只有 `limits` 与 `onExceeded` 两个字段，静默忽略只会让拼错的字段名变成一条永不生效的规则——那比报错难查得多。
 
 `resolveLimits()` 里还有一道 `Number.isSafeInteger(limit) && limit >= 0` 的复查，且**是抛错而不是跳过**：schema 已经校验过，但**直接以编程方式调用 `apply()`** 可以绕过 schema。跳过非法条目会让那个工具变成"不限"——插件看起来装了却在静默放行，与"限速器悄悄不工作"是同一类故障。抛错位置在注册任何监听器之前（`apply` 的第一行），所以被拒的配置不会留下半注册的插件。
+
+同一道复查也覆盖 `*` 通配符键。原先只有 schema 拦它，程序化传入 `{limits: {'*': 1}}` 会被接受并存成一条**名为 `*` 的工具配额**，而没有任何调用会匹配这个名字——配额看起来配好了，却永不生效。加上这道检查后两层对 `*` 的处置一致，也与 README「不支持 `*` 通配符」的承诺对齐。
 
 > 实测：本插件的 schema 用 `z.natural()`（带整数校验），`NaN` 会被 `expected number multiple of 1 but got NaN` 挡下——「`NaN` 能穿过 `z.number()`」那个洞只在只有 `.min()`/`.max()` 而无整数约束时成立。这道守卫兜的是绕过 schema 的那条路径。
 
@@ -122,6 +124,7 @@ schema 用 `z.union([z.const('deny'), z.const('ask')]).default('deny')`（实测
 - **原型敏感工具名**：`__proto__`、`constructor`、`toString` 作为工具名能正常配置与计数
 - **非法配额 fail-loud**：直接调 `apply()` 传 `NaN` / `1.5` / `-1` / 超安全整数时抛错，且 `on()` 一次都没被调用——不留半注册状态
 - **非普通对象 `limits` fail-loud**：`Map` / 数组 / 字符串同样抛错且不注册（`Map` 若不拦会因 `Object.keys` 为空而变成"全部不限"的静默 fail-open）
+- **`*` 通配符 fail-loud**：`Config` 与直接调 `apply()` 都抛 `wildcard limits are not supported` 且不注册（只拦一条路径时，另一条会静默装进一条永不匹配的配额）
 - **`onExceeded` 两种取值**：`ask` 下超额返回 `kind: 'ask'` 且两种 locale 的 `displayReason` 都在；默认与显式 `deny` 都返回原来那条 deny；非法取值在注册前抛错
 
 ## 发布纪律

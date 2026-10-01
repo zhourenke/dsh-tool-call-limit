@@ -290,6 +290,29 @@ test('an invalid quota passed programmatically is rejected before any listener i
   }
 })
 
+test('a wildcard limit passed programmatically is rejected instead of installing a cap that never fires', () => {
+  // The schema rejects `'*'` for real users and the README promises wildcards are
+  // unsupported, but `apply` is a public entry point too. This key used to be
+  // accepted and stored under a tool literally named "*", which no call can ever
+  // match: the quota looked configured and silently never applied. That is the
+  // same failure mode as the two tests above, so it must fail loudly as well —
+  // and before registration.
+  const registrations = []
+  const ctx = {
+    on(eventName) {
+      registrations.push(eventName)
+      return () => true
+    },
+  }
+
+  assert.throws(
+    () => apply(ctx, { limits: { '*': 1 } }),
+    /wildcard limits are not supported/,
+    'apply must reject a wildcard key',
+  )
+  assert.deepEqual(registrations, [], 'a rejected configuration must register nothing')
+})
+
 test('a non-plain-object limits map is rejected instead of silently disabling every limit', () => {
   // `Object.keys(new Map(...))` is empty, so a Map would read as "no limits"
   // and leave every tool unlimited with no error whatsoever. An array would
