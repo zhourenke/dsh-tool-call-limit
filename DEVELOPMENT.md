@@ -23,6 +23,8 @@ pnpm run build      # 编译到 lib/
 pnpm test           # 先构建，再执行 lib/ 产物
 ```
 
+> **本仓的 PowerShell 命令不依赖 shell 版本，不必随换版复核。** 三条命令块（构建、连接点、装载期自检）在 **pwsh 7.6.6（`Core`）** 与 **Windows PowerShell 5.1.26100.9168（`Desktop`）** 上 A/B 实测输出一致——它们只用两版共有的语法（`-replace`、`Join-Path`、`New-Item -ItemType Junction`、`[System.IO.Directory]::CreateDirectory`）。主指南「本环境的 PowerShell 版本基线」里那批"换版即作废"的结论（`Get-Content` 的默认读法、`>` 的落盘编码、`&&` 不可用…）都落在**读写的编码与语法糖**上，本仓不含这类写法；`$PSVersionTable` 自证仍是动手前的第一步。
+
 **每次修改 `src/index.ts` 后必须运行 `pnpm run build`，并把 `lib/` 一并提交。**
 
 `pnpm test` 不是可选项。`tsc` 只做类型检查与转译，漂移检查只看 git 状态——**没有任何一步执行过产物**。于是「模块在 import 时抛错」可以一路绿灯，直到用户重启 DSH 才在启动日志里爆出来。测试直接 `import` 编译产物，用模拟 ctx 走一遍加载、事件注册与配额判定。
