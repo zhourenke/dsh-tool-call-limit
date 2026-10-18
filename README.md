@@ -153,7 +153,8 @@ per-step tool limit has no active agent step
 
 ## 兼容性
 
-在 **DSH v0.2.0-rc.2**（2026-09）下测试通过。
+在 v0.2.0-rc.2（2026-09）下测试通过。
+在 v0.2.1-rc.2（2026-10）下测试通过。
 
 插件列表里的名称、说明与图标来自包内的 `locale/{en,zh}.json` 与 `icon.svg`（DSH 0.1.7 起的显示元数据），因此不用激活插件就能看出它是做什么的。
 

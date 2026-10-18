@@ -9,7 +9,7 @@
 | `src/index.ts` | 全部实现，单文件 |
 | `lib/index.js` | 编译产物，**必须提交**（路线 A） |
 | `lib/types/index.d.ts` | 类型声明，**必须提交** |
-| `test/core.test.mjs` | 对编译产物的执行测试（15 项） |
+| `test/core.test.mjs` | 对编译产物的执行测试（当前 22 项） |
 | `cordis.patch.yml` | profile 层插入声明 |
 | `locale/{en,zh}.json` | 插件列表的显示元数据（名称与说明，DSH 0.1.7 起） |
 | `icon.svg` | 插件列表图标；宿主读成内联 data URL |
@@ -128,6 +128,7 @@ schema 用 `z.union([z.const('deny'), z.const('ask')]).default('deny')`（实测
 - **非普通对象 `limits` fail-loud**：`Map` / 数组 / 字符串同样抛错且不注册（`Map` 若不拦会因 `Object.keys` 为空而变成"全部不限"的静默 fail-open）
 - **`*` 通配符 fail-loud**：`Config` 与直接调 `apply()` 都抛 `wildcard limits are not supported` 且不注册（只拦一条路径时，另一条会静默装进一条永不匹配的配额）
 - **`onExceeded` 两种取值**：`ask` 下超额返回 `kind: 'ask'` 且两种 locale 的 `displayReason` 都在；默认与显式 `deny` 都返回原来那条 deny；非法取值在注册前抛错
+- **peerDependencies 与 README 强一致**：断言所有宿主 peer 范围一致，且与中英文 README 中的兼容性声明逐版本一一对应
 
 ## 发布纪律
 
@@ -220,22 +221,41 @@ node -e "import('file:///$dshU/dsh-app-boot/lib/index.js').then(async b => { con
 
 > **搜索范围必须是递归的。** `Get-ChildItem "$dsh\dsh-*\lib\*.js"` 只覆盖各包 `lib/` 的**顶层**（本次 453 个文件），而事件名等字符串有相当一部分落在 `lib/types/*.js` 里——用非递归形式搜会得到**全 0 的假红**，且文件数不为 0 也照样发生。可靠形式是 `Get-ChildItem $dsh -Recurse -Include *.js -File`。
 
-## 运行时依赖（与 DSH 版本匹配）
+## 运行时依赖（双基线：0.2.0-rc.2 与 0.2.1-rc.2）
 
 宿主提供的包走 `peerDependencies` 并全部标 `optional: true`（阻止 pnpm 引入第二份副本）：
 
 | 包 | 版本 | 用途 |
 |---|---|---|
 | `@deepseek-ai/cordis` | `^4.0.4` | 插件框架（走自己的版本线） |
-| `@deepseek-ai/dsh-agent` | `^0.2.0-rc.2` | `agent/pre-step` 等 Agent 事件 |
-| `@deepseek-ai/dsh-tools` | `^0.2.0-rc.2` | `tools/pre-execute` 工具管线 |
+| `@deepseek-ai/dsh-agent` | `^0.2.0-rc.2 \|\| ^0.2.1-rc.2` | `agent/pre-step` 等 Agent 事件 |
+| `@deepseek-ai/dsh-tools` | `^0.2.0-rc.2 \|\| ^0.2.1-rc.2` | `tools/pre-execute` 工具管线 |
 | `@deepseek-ai/schemastery` | `~3.18.4` | 配置校验，**唯一真实的 `dependencies`** |
 
-`devDependencies` 中的三个宿主包**钉死到精确版本**（`4.0.4` / `0.2.0-rc.2` / `0.2.0-rc.2`）：连接点安装时插件解析到的是自己 `node_modules` 里的副本，写范围就会对着与线上不同的宿主做类型检查与测试。
+`devDependencies` 中的宿主包**钉死到基线精确版本**（`4.0.4` / `0.2.0-rc.2` / `0.2.0-rc.2`）：让 `tsc` 按基线宿主校验，连接点安装时插件解析到的是自己 `node_modules` 里的副本。next 版本（0.2.1-rc.2）的类型校验、测试与真实宿主端到端在 `_next-compat/` 隔离环境中复核。
+
+`peerDependencies` 采用双轨范围 `^0.2.0-rc.2 || ^0.2.1-rc.2`：预发布版本只被「同一 major.minor.patch 且带预发布」的比较器放行，`^0.2.0-rc.2` 匹配不到 `0.2.1-rc.2`，必须按预发布代显式用 `||` 扩展支持窗口。测试 `core.test.mjs` 断言所有宿主 peer 范围一致且与 README 兼容行一一对应。
 
 `schemastery` 写 `~3.18.4` 而不是 `^3.18.2`：宿主各包统一声明 `~3.18.4`，范围写宽会让本包解析到另一份实体，`Config` 的导出类型随即报 `TS2883`（无法命名）。实测对齐后 `pnpm why @deepseek-ai/schemastery` 只剩一个版本，`typecheck` 与 `build` 都退出 0。
 
-DSH 升级后按 `PLUGIN_RELEASE_GUIDE.md`「DSH 升级后的复核」重新核对事件名、宿主符号与 peer 范围。
+版本号遵循下界原则（指南 §2.11），双轨支持期间保持 `0.2.0-rc2.1` 不动（改号只在用户明确提出时执行）。
+
+## DSH 0.2.1-rc.2 复核与端到端验证结论
+
+在 `_next-compat/` 隔离环境中对 DSH next 版本（`0.2.1-rc.2`，commit `332895e`）进行了源码类型比对与真实宿主端到端验证：
+
+1. **宿主契约比对**：
+   - `@deepseek-ai/dsh-agent@0.2.1-rc.2`：导出的 `Agent`、`PreStepDecision` 类型，以及监听的五个事件（`agent/pre-step`、`agent/disposed`、`agent/turn-stopping`、`agent/error`）结构与载荷契约完全一致（全部 `.d.ts` 中仅有一处 JSDoc 注释更新）。
+   - `@deepseek-ai/dsh-tools@0.2.1-rc.2`：导出的 `ToolExecution`、`PreToolDecision` 类型，以及 `tools/pre-execute` 的 waterfall 调度管线与 `serviceAsk` 逻辑完全一致。
+2. **真实宿主端到端全链路验证**：
+   - 依赖解析并加载 `@deepseek-ai/dsh@0.2.1-rc.2`，在隔离 profile（`test-call-limit`）下拉起真实 DSH Web 实例（动态端口，不碰 3080 端口与现网进程）；
+   - Cordis Loader 成功解析包配置与 `cordis.patch.yml`，宿主激活 `tool-call-limit`；
+   - 真实创建 Agent 实例，配置 `limits: { everything_search: 1 }, onExceeded: deny`：
+     - Step 1 调用 1：成功放行并执行底层的 Windows `es.exe` 返回真实结果；
+     - Step 1 调用 2（超额）：被 `tool-call-limit` 拦截拒绝，错误文案确为 `Error: tool everything_search exceeded its per-step limit of 1`；
+     - Step 2 调用 1：进入新 step 后配额重置成功放行；
+     - 未配置工具（`working_directory`）完全不受配额限制；
+   - 验证完成后宿主优雅停止，释放端口与资源。
 
 ## 许可证
 
