@@ -153,8 +153,7 @@ To cap the number of queries in one `web_search` call, configure the Web tool's 
 
 ## Compatibility
 
-Tested with v0.2.0-rc.2 (September 2026).
-Tested with v0.2.1-rc.2 (October 2026).
+Tested with v0.2.2-rc.5 (November 2026).
 
 The name, description and icon shown in the plugin list come from `locale/{en,zh}.json` and `icon.svg` inside the package (DSH 0.1.7 display metadata), so DSH's plugin list shows what it does without activating it.
 

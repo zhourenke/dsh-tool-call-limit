@@ -221,41 +221,81 @@ node -e "import('file:///$dshU/dsh-app-boot/lib/index.js').then(async b => { con
 
 > **搜索范围必须是递归的。** `Get-ChildItem "$dsh\dsh-*\lib\*.js"` 只覆盖各包 `lib/` 的**顶层**（本次 453 个文件），而事件名等字符串有相当一部分落在 `lib/types/*.js` 里——用非递归形式搜会得到**全 0 的假红**，且文件数不为 0 也照样发生。可靠形式是 `Get-ChildItem $dsh -Recurse -Include *.js -File`。
 
-## 运行时依赖（双基线：0.2.0-rc.2 与 0.2.1-rc.2）
+## 运行时依赖（单基线：0.2.2-rc.5）
 
 宿主提供的包走 `peerDependencies` 并全部标 `optional: true`（阻止 pnpm 引入第二份副本）：
 
 | 包 | 版本 | 用途 |
 |---|---|---|
-| `@deepseek-ai/cordis` | `^4.0.4` | 插件框架（走自己的版本线） |
-| `@deepseek-ai/dsh-agent` | `^0.2.0-rc.2 \|\| ^0.2.1-rc.2` | `agent/pre-step` 等 Agent 事件 |
-| `@deepseek-ai/dsh-tools` | `^0.2.0-rc.2 \|\| ^0.2.1-rc.2` | `tools/pre-execute` 工具管线 |
-| `@deepseek-ai/schemastery` | `~3.18.4` | 配置校验，**唯一真实的 `dependencies`** |
+| `@deepseek-ai/cordis` | `^4.1.0` | 插件框架（走自己的版本线） |
+| `@deepseek-ai/dsh-agent` | `^0.2.2-rc.5` | `agent/pre-step` 等 Agent 事件 |
+| `@deepseek-ai/dsh-tools` | `^0.2.2-rc.5` | `tools/pre-execute` 工具管线 |
+| `@deepseek-ai/schemastery` | `~3.19.0` | 配置校验，**唯一真实的 `dependencies`** |
 
-`devDependencies` 中的宿主包**钉死到基线精确版本**（`4.0.4` / `0.2.0-rc.2` / `0.2.0-rc.2`）：让 `tsc` 按基线宿主校验，连接点安装时插件解析到的是自己 `node_modules` 里的副本。next 版本（0.2.1-rc.2）的类型校验、测试与真实宿主端到端在 `_next-compat/` 隔离环境中复核。
+`devDependencies` 中的宿主包**钉死到基线精确版本**（`4.1.0` / `0.2.2-rc.5` / `0.2.2-rc.5`）：让 `tsc` 按基线宿主校验，连接点安装时插件解析到的是自己 `node_modules` 里的副本。安装出来的 `@deepseek-ai/dsh-*` 只有 0.2.2-rc.5 一条版本线（`dsh-agent` / `dsh-brand` / `dsh-error` / `dsh-llm` / `dsh-scope` / `dsh-session` / `dsh-session-projection` / `dsh-system-prompt` / `dsh-timeout` / `dsh-tools` / `dsh-typert-protocol` / `dsh-user-approval` / `dsh-util-crypto` / `dsh-util-values`），`pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 按这份清单同步。
 
-`peerDependencies` 采用双轨范围 `^0.2.0-rc.2 || ^0.2.1-rc.2`：预发布版本只被「同一 major.minor.patch 且带预发布」的比较器放行，`^0.2.0-rc.2` 匹配不到 `0.2.1-rc.2`，必须按预发布代显式用 `||` 扩展支持窗口。测试 `core.test.mjs` 断言所有宿主 peer 范围一致且与 README 兼容行一一对应。
+**`peerDependencies` 自 2026-11 起收成单臂 `^0.2.2-rc.5`**：`0.2.0-rc.2` 与 `0.2.1-rc.2` 两代宿主不再声明、也不再维护，历史支持窗口到此关闭。单臂不是"少写几行"，它把支持边界从"两代"收紧成"一条版本线"，于是**准入闸门从放行变成拦截**——实测 `satisfies('0.2.2-rc.1', '^0.2.2-rc.5', { includePrerelease: true }) === false`：宿主只要还没升到 rc.5，本插件就会被闸门**静默跳过**，不报错、不激活、只留一条 compatibility 警告，界面上的表现是"配额完全不生效"。所以**改窄 peer 与宿主确实运行在 rc.5 或更高，必须是同一步**；装好插件、确认宿主版本之后再重启。
 
-`schemastery` 写 `~3.18.4` 而不是 `^3.18.2`：宿主各包统一声明 `~3.18.4`，范围写宽会让本包解析到另一份实体，`Config` 的导出类型随即报 `TS2883`（无法命名）。实测对齐后 `pnpm why @deepseek-ai/schemastery` 只剩一个版本，`typecheck` 与 `build` 都退出 0。
+`schemastery` 写 `~3.19.0`：宿主 0.2.2-rc.5 各包统一声明 `~3.19.0`，范围写宽会让本包解析到另一份实体，`Config` 的导出类型随即报 `TS2883`（无法命名）。实测对齐后 `pnpm why @deepseek-ai/schemastery` 只剩 3.19.0 一份，`typecheck` 退出 0。`cordis` 同理对齐宿主的 `~4.1.0` 线（宿主自身声明 `~4.1.0`，这里写 `^4.1.0`）。
 
-版本号遵循下界原则（指南 §2.11），双轨支持期间号取下界（当前为 `0.2.0-rc2.2`，改号只在用户明确提出时执行）。
+**版本号 `0.2.2-rc.5.1` 是有意跨 tuple 的**（指南 §2.11）：号跟着宿主基线走，尾巴用保留点的 `rc.N.M` 形状。旧式收词写法 `rc2` 在预发布号到两位数时会字典序倒挂（`0.2.1-rc10.1 < 0.2.1-rc9.1`），而 `rc.9.1 < rc.10.1` 正确；跨 tuple 所以不会降级（`compare('0.2.2-rc.5.1', '0.2.0-rc2.2') = 1`）。改号只在用户明确提出时执行。
 
-## DSH 0.2.1-rc.2 复核与端到端验证结论
+## DSH 0.2.2-rc.5 复核与端到端验证结论
 
-在 `_next-compat/` 隔离环境中对 DSH next 版本（`0.2.1-rc.2`，commit `332895e`）进行了源码类型比对与真实宿主端到端验证：
+复核环境是 `_rc5/`（`@deepseek-ai/dsh@0.2.2-rc.5`，独立 `DSH_HOME`，profile `call-limit`，`--port 0` 随机端口，全程不碰 3080）。**`_next-compat/` 已删除**——那是 `0.2.1-rc.2` 的旧环境，任何指向它的路径都已失效。
 
-1. **宿主契约比对**：
-   - `@deepseek-ai/dsh-agent@0.2.1-rc.2`：导出的 `Agent`、`PreStepDecision` 类型，以及监听的五个事件（`agent/pre-step`、`agent/disposed`、`agent/turn-stopping`、`agent/error`）结构与载荷契约完全一致（全部 `.d.ts` 中仅有一处 JSDoc 注释更新）。
-   - `@deepseek-ai/dsh-tools@0.2.1-rc.2`：导出的 `ToolExecution`、`PreToolDecision` 类型，以及 `tools/pre-execute` 的 waterfall 调度管线与 `serviceAsk` 逻辑完全一致。
-2. **真实宿主端到端全链路验证**：
-   - 依赖解析并加载 `@deepseek-ai/dsh@0.2.1-rc.2`，在隔离 profile（`test-call-limit`）下拉起真实 DSH Web 实例（动态端口，不碰 3080 端口与现网进程）；
-   - Cordis Loader 成功解析包配置与 `cordis.patch.yml`，宿主激活 `tool-call-limit`；
-   - 真实创建 Agent 实例，配置 `limits: { everything_search: 1 }, onExceeded: deny`：
-     - Step 1 调用 1：成功放行并执行底层的 Windows `es.exe` 返回真实结果；
-     - Step 1 调用 2（超额）：被 `tool-call-limit` 拦截拒绝，错误文案确为 `Error: tool everything_search exceeded its per-step limit of 1`；
-     - Step 2 调用 1：进入新 step 后配额重置成功放行；
-     - 未配置工具（`working_directory`）完全不受配额限制；
-   - 验证完成后宿主优雅停止，释放端口与资源。
+```powershell
+# 复核（幂等，可反复跑）
+node C:\Users\ParkGarden\DSH_Workspace\CreatePlugin\_rc5\probe\call-limit-e2e.mjs
+```
+
+**基线结果（2026-11-20）：`56 passed, 0 failed`**，连跑两次结果一致。
+
+### 契约比对：五个扩展点全部未变
+
+| 契约 | 0.2.2-rc.5 实测 |
+|---|---|
+| `agent/pre-step` | waterfall，载荷 `{ agent, messages, turn, step, signal, modelSelection }`；`next()` 出 `PreStepDecision` |
+| `agent/disposed` | emit，`{ agent }` |
+| `agent/turn-stopping` | serial，`{ agent, turn, signal }` |
+| `agent/error` | emit，`{ agent, turn, step, error }` |
+| `tools/pre-execute` | waterfall，`(exec: ToolExecution, next: () => Promise<PreToolDecision>)` |
+| `ctx.tools` / `ctx.agents` | 服务名不变（`dsh-tools` 的 `super(ctx, "tools")`、`dsh-agent` 的 `super(ctx, "agents")`） |
+| `PreToolDecision` | `allow` / `deny{reason, info?}` / `cancel` / `ask{reason?, displayReason?}` 四支齐全，**`onExceeded: "ask"` 依赖的 `displayReason` 未变** |
+| `ToolExecution` | 仍是 `ToolExecutionInput` 的超集，`name` 与 `agent?` 都在 |
+| `cordis` | 4.0.4 → 4.1.0；`EventOptions.prepend` 仍在，两个扩展点的 `{ prepend: true }` 继续有效 |
+| `schemastery` | 3.18.4 → 3.19.0；`natural` / `transform` / `resolve` / `union` / `const` / `ValidationError` 全部仍在 |
+
+唯一新增的是 `PreStepDecision` 的 `enter` 支多了可选的 `startsRequestSeries?: true`。本插件只把 `next()` 的决定原样返回、只读 `kind`，因此无需改动。
+
+### 端到端：56 条断言覆盖了什么
+
+1. **准入闸门与装载**：`evaluatePluginCompatibility()` 放行；`prepareProfile()` 的 `skippedBundles` 不含本包；本包确实是装配树里的一层。
+2. **默认配置是惰性的**：`limits: {}` 时同一工具连调三次全部通过，且工具体真的执行了（返回了目录路径）。
+3. **配额执行**：`limits: { working_directory: 1 }` 下第 1 次通过、第 2 次返回 `tool working_directory exceeded its per-step limit of 1` 且**工具体没有执行**；兄弟 Agent 有独立预算；新 step 重新获得名额。
+4. **fail-closed 只对已配置工具生效**：无 Agent 上下文的已配置工具得到 `per-step tool limit requires an agent context`；同样形态的**未配置**工具则照常下到工具体（由工具自己报错），证明插件没有越界。
+5. **四条清理路径（端到端）**：`agent/turn-stopping`、`agent/error`、`agent/disposed`、`pre-step` 返回 `reject`——清理后再调用都得到 `per-step tool limit has no active agent step`。第五条（`next()` 抛错）走的是异常分支，端到端里不好安全构造，由 `core.test.mjs` 的 `preStepThrows` 用例覆盖。
+6. **并行不共用一个名额**：同一个 step 里三个并发调用，恰好一个通过、两个被拒。
+7. **`onExceeded: "ask"`**：超额那一次只发出**一次** `approval.request`，`toolName` 正确、`reason` 带配额文案、`displayReason` 的 `en` / `zh` 都在；没有审批通道时由审批层（而非配额层）拒绝，两条拒绝文案可区分；通道批准一次后该次调用执行，且**下一次超额仍然要再问一次**（批准不提高配额）。
+8. **坏配置**：负配额让 loader 拒绝该行——`1 entry did not activate` + `tool-call-limit (@zhourenke/dsh-tool-call-limit): ValidationError: invalid config: - $.working_directory expected number >= 0 but got -1`，插件不挂载、不装任何上限。**它不会静默变成一个不同的策略**，但也确实不会生效——这条只能靠宿主日志发现，所以配置改完要确认日志里没有 `did not activate`。
+9. **分工与"没重复造轮子"**：见下节。
+
+### 没有重复造轮子
+
+`dsh-base` 的默认组合里**没有任何按 step 计数工具调用的包**（组合里 `tool-call` 只有 `@deepseek-ai/dsh-tool-call-timeout-policy`，它管的是单次调用的**超时**，不是次数）。
+
+唯一容易看成重叠的是 `@deepseek-ai/dsh-tool-executor-ptc` 里的 `ToolCallLimitExceededError`：`run_code exceeded its limit of N tool calls (M per minute of its timeout); call K was not dispatched.` 但它**不是**同一个东西：
+
+- 它由 `run_code` **自己那一次调用的 `timeoutMs` 推导**（`maxSubCalls = spec.timeoutMs === null ? Infinity : Math.floor(spec.timeoutMs / 6e4 * maxSubCallsPerMinute)`），配置面只有 `maxSubCallsPerMinute`（默认 1024）与 `maxParallelSubCalls`（默认 10），**没有按工具名、按 step 的任何开关**；
+- 它数的是 `run_code` 程序内部**派发的嵌套调用**，目的是抓"程序里写了死循环"，失败表现是整段 `run_code` 以 `CODE_RUN_FAILED` 结束；
+- 本插件数的是一次 step 里**进入 ToolRuntime 的调用**，按注册名分别计数，超额时**只拒那一次调用**（模型可以换工具继续），并能选择 `ask`。
+
+两者层级、触发条件、失败语义都不同，是互补而非重复。同理 `maxParallelToolCalls` 管并发数、`dsh-spill-policy` 管结果留存、`dsh-repeat-tool-reminder` 管重复提醒，都不覆盖"每 step 每工具的次数上限"。
+
+### 两条环境事实（踩过）
+
+- **`ctx.tools.definitions()` 不带 scope 时只列全局层。** 在隔离 profile 里它只给出 `working_directory` 与 `team_task_*`，而其中只有 `working_directory` 能在 `tools.execute` 里真正解析出来（`team_task_*` 报 `unknown tool`，它们属于团队作用域）。**看不到某个能力不等于宿主没有它**，也不等于能直接执行它——探针因此以 `working_directory` 作承载体，它是 `dsh-tool-working-directory` 真正注册的全局工具，行为与任何被限流的工具等价（本插件按名字记账，与工具做什么无关）。
+- **跨进程状态不存在，但会话是落盘的。** 每次 `runProfile` 都是新进程，配额状态本来就只在内存里；可 `agents.create({ sessionId })` 会把会话写进 `DSH_HOME/sessions`，同一个 id 第二次用会 `SessionAlreadyExistsError`。探针因此给每次运行加上时间戳后缀。
 
 ## 许可证
 
